@@ -1,0 +1,241 @@
+You are an expert full-stack engineer + product designer building a hackathon MVP.
+Build a web-first product called “ClearHealth” (working name): a Health Misinformation Detector + Counter-Message Generator.
+
+YOU MUST USE THIS HACKATHON STACK
+- Framework / Starter: BetterTStack (https://www.better-t-stack.dev)
+  - Use its recommended structure and defaults for Next.js + TypeScript + DB + auth (if included).
+  - Do not invent a different architecture unless BetterTStack requires it.
+- AI: Vercel AI SDK (https://ai-sdk.dev)
+  - Use AI SDK for streaming UI responses, server-side model calls, and structured output generation.
+- UI/UX: Follow the component and layout guidance from design.naironai.com
+  - Keep UI clean, modern, minimal, clear hierarchy. Use their spacing, typography scale, cards, badges, and stepper patterns.
+
+CONSTRAINTS / CONTEXT
+- Hackathon: NO hardware. Web-first MVP. “Mobile later” (responsive web is enough).
+- Must include strong safety guardrails. Educational only. Not medical advice.
+- Do not generate medication dosage or instructions.
+- If emergency symptoms are detected (chest pain, stroke signs, overdose, pregnancy bleeding, suicidal ideation, severe allergic reaction, severe shortness of breath, seizure, etc.) DO NOT debate. Output urgent care guidance and stop.
+
+PRODUCT GOAL (DEMO)
+A web app that:
+1) Ingests a claim:
+   - Paste text (required)
+   - Paste URL (recommended)
+   - Upload screenshot/PDF (optional; keep hackathon-simple)
+2) Extracts atomic claims.
+3) Assigns a risk score (severity/topic/urgency/vulnerable group).
+4) Retrieves evidence from a curated trusted corpus (RAG) and cites sources.
+5) Generates a “counter-message pack” in multiple lengths and formats:
+   - What’s wrong / missing
+   - What we actually know
+   - What you should do now (safe general guidance)
+   - When to seek care (red flags)
+   - Versions: short + medium + long
+   - Formats: social reply, patient-friendly handout, clinician note
+6) Shows confidence/uncertainty + citations
+7) Stores history + feedback
+8) Admin view: top misinformation themes, severity distribution, critical alerts
+
+TECH CHOICES (MAKE THEM CONCRETE)
+- Next.js (via BetterTStack)
+- DB: Postgres (via BetterTStack recommended ORM/migrations)
+- Vector search: Prefer Postgres + pgvector if BetterTStack supports it. If not, implement a minimal in-memory vector store for hackathon, but still persist sources.
+- Queue: Avoid Redis unless needed. Use background jobs only if BetterTStack already includes it; otherwise do a simple “job status” table and run analysis synchronously with streaming.
+
+INPUT INGESTION (MVP)
+- Paste text: immediate.
+- URL fetch: server route fetches HTML, uses a readability extraction library to get main content (or simplest extraction if faster).
+- Uploads:
+  - For hackathon, accept PDF/image.
+  - If OCR is too heavy, allow user to paste extracted text OR use a single OCR step only if easy.
+  - Store uploads as files (local) or object storage if BetterTStack includes a storage adapter.
+
+RAG (TRUSTED SOURCES PACK)
+- Create /data/sources with 10–30 trusted documents (seed for demo):
+  - WHO myth-busting / vaccines Q&A
+  - CDC: antibiotics stewardship, vaccines basics, flu/viral guidance
+  - NHS: common condition guidance
+  - A few peer-reviewed abstracts (keep small; do NOT copy paywalled content)
+- Build an ingestion script:
+  - chunk docs (300–800 tokens)
+  - embed chunks
+  - store chunks + metadata in DB (and embeddings if using pgvector)
+- Retrieval:
+  - For each atomic claim, embed claim text and retrieve top 3–5 chunks.
+
+AI PIPELINE (MUST USE VERCEL AI SDK)
+Implement a multi-step pipeline with structured outputs:
+Step 1: Claim extraction (structured JSON)
+Step 2: Risk scoring + red flag detection (structured JSON)
+Step 3: Evidence retrieval + stance classification for each claim (structured JSON + citations)
+Step 4: Counter-message pack generation (structured JSON, multi-length, multi-format)
+
+CRITICAL: Use AI SDK structured outputs (or equivalent strict JSON validation)
+- Validate all model outputs against schemas.
+- If validation fails: retry once then fallback to “uncertain” and safe generic guidance.
+
+PROMPTS + SCHEMAS
+A) CLAIM EXTRACTION SCHEMA
+Return:
+{
+  "language": "en|...",
+  "topics": ["..."],
+  "claims": [
+    {
+      "id": "c1",
+      "claim_text": "...",
+      "claim_type": "factual|medical_advice|conspiracy|anecdote|other",
+      "topic": "...",
+      "target_population": "general|pregnancy|child|elderly|chronic_condition|...",
+      "urgency_hint": "none|low|medium|high",
+      "potential_harm": "low|medium|high",
+      "certainty_in_text": 0-1
+    }
+  ]
+}
+Rules:
+- Split combined claims into atomic ones.
+- Keep claims close to original wording.
+- Do not introduce new facts.
+
+B) RISK + RED FLAGS SCHEMA
+Return:
+{
+  "overall_severity": "low|medium|high|critical",
+  "red_flags_detected": true|false,
+  "red_flags": ["..."],
+  "overall_topics": ["..."],
+  "per_claim": [
+    {"id":"c1","severity":"low|medium|high|critical","risk_reason":"..."}
+  ]
+}
+Hard-rule:
+- If red_flags_detected, overall_severity must be critical.
+
+C) STANCE + CITATIONS SCHEMA (PER CLAIM)
+Input: claim + retrieved chunks with metadata
+Return:
+{
+  "stance": "supported|contradicted|uncertain",
+  "confidence": 0-1,
+  "explanation": "short",
+  "citations": [
+    {
+      "source_org":"WHO|CDC|NHS|Journal",
+      "source_title":"...",
+      "source_url":"...",
+      "snippet":"<=40 words",
+      "relevance": 0-1
+    }
+  ]
+}
+Rules:
+- Use ONLY provided chunks.
+- If insufficient evidence, stance=uncertain.
+
+D) COUNTER-MESSAGE PACK SCHEMA
+Input: original content + claims + stances + citations + user settings (region/tone/audience/platform)
+Return:
+{
+  "disclaimer": "...",
+  "what_is_wrong_or_missing": "...",
+  "what_we_know": "...",
+  "what_to_do_now": "...",
+  "when_to_seek_care": "...",
+  "outputs": [
+    {"format":"social_reply|handout|clinician_note","length":"short|medium|long","content":"..."}
+  ],
+  "citations_list": [
+    {"id":"[1]","source_org":"...","source_title":"...","source_url":"..."}
+  ],
+  "uncertainty_notes":"..."
+}
+Rules:
+- Never provide dosing instructions or diagnosis.
+- If critical: do not argue; prioritize urgent care guidance and safe steps.
+- Include citations as [1], [2] etc and list them at bottom.
+
+SAFETY GUARDRAILS (NON-NEGOTIABLE)
+1) Hard-coded red-flag keyword/rule check BEFORE LLM output display.
+2) Hard-coded “no dosing” filter (remove mg/ml/tablets/day patterns).
+3) Always show: “Educational — not medical advice.”
+4) Encourage contacting a clinician and emergency services where relevant.
+
+UI/UX (FOLLOW DESIGN.NAIR0NAI.COM STYLE)
+Pages:
+1) Home / Analyze
+   - Input tabs: Paste Text | URL | Upload
+   - Settings: Region (WHO/US/UK), Tone, Audience, Platform
+   - CTA: Analyze
+   - Provide “Try an example” buttons (prefill)
+2) Analysis Result
+   - Stepper (ingest → claims → risk → evidence → response)
+   - Risk badge (Low/Med/High/Critical)
+   - Topics chips
+   - Claims table: claim, stance badge, confidence %, severity
+   - Citations accordion per claim
+   - Output panel with toggles:
+     - format (social/handout/clinician)
+     - length (short/medium/long)
+     - copy buttons
+   - Feedback component: Helpful / Not helpful / Missing sources + text box
+3) History
+   - list of prior analyses
+   - filters by severity/topic
+4) Admin
+   - top topics
+   - severity distribution
+   - recent “critical”
+   - feedback summary
+
+DATABASE MODELS (IMPLEMENT)
+- Analysis, Claim, Citation, GeneratedOutput, Feedback, SourceDocument, SourceChunk
+Include status fields (PENDING/RUNNING/DONE/FAILED), timestamps, and JSON fields where convenient.
+
+API / ROUTES (BETTERTSTACK STYLE)
+- POST /api/analyze
+  - accepts input + settings
+  - creates Analysis row (RUNNING)
+  - runs pipeline
+  - stores results
+  - returns analysisId
+- GET /api/analysis/:id
+- POST /api/analysis/:id/feedback
+- GET /api/admin/stats (optional)
+
+STREAMING EXPERIENCE (AI SDK)
+- Use AI SDK to stream progress + final outputs (or stream the counter-message while earlier steps complete).
+- If streaming is too complex, at least stream “generation” step.
+
+MVP SCOPE (TIGHT)
+Day 1:
+- Paste text → claims → risk → counter-message (short/medium/long) + citations
+Day 2:
+- URL fetch
+- history + feedback
+- admin stats
+
+DEMO CONTENT (REQUIRED)
+Add /data/examples with 10 sample misinformation inputs and expected categories:
+- antibiotics for viral infections
+- “vaccines cause X” myth
+- “miracle cure” for diabetes/cancer
+- blood pressure myths
+- hydration myths for infants
+etc.
+Include a “Demo mode” toggle to quickly run them.
+
+DELIVERABLES
+- Full codebase using BetterTStack conventions
+- Uses Vercel AI SDK
+- UI matches NaironAI design patterns
+- README: setup, env vars, ingestion script, how to demo
+- Provide a quick pitch script:
+  - Problem → Solution → How it works → Safety → Demo → Impact
+
+Start implementing now. Output:
+- file tree
+- key files + code for core routes/components
+- schemas
+- seed scripts for sources/examples
+- README
