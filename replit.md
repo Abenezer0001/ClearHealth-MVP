@@ -7,6 +7,8 @@ ClearHealth is an AI-powered web application that detects health misinformation 
 The application serves as an educational tool with strong safety guardrails - it does not provide medical advice, filters out medication dosage information, and immediately redirects users to emergency services when critical symptoms are detected.
 
 ## Recent Changes (Feb 2026)
+- Migrated to Vercel AI SDK with `generateObject` for structured outputs
+- Using Zod schemas for type-safe AI responses (ClaimsExtractionSchema, RiskAssessmentSchema, CounterMessageSchema)
 - Fixed critical bug: AI pipeline now updates existing claims instead of creating duplicates
 - Added updateClaim method to storage interface
 - Improved claim matching logic in risk assessment step
@@ -54,7 +56,9 @@ Preferred communication style: Simple, everyday language.
 ## External Dependencies
 
 ### AI Services
-- **OpenAI API** via Replit AI Integrations (`AI_INTEGRATIONS_OPENAI_API_KEY`, `AI_INTEGRATIONS_OPENAI_BASE_URL`)
+- **Vercel AI SDK** (`ai` and `@ai-sdk/openai` packages) with Replit AI Integrations backend
+- Environment: `AI_INTEGRATIONS_OPENAI_API_KEY`, `AI_INTEGRATIONS_OPENAI_BASE_URL`
+- Uses `generateObject` with Zod schemas for type-safe structured outputs
 - Used for: claim extraction, risk scoring, evidence retrieval, counter-message generation
 
 ### Database

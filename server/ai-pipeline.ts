@@ -1,13 +1,14 @@
-import OpenAI from "openai";
+import { generateObject } from "ai";
+import { createOpenAI } from "@ai-sdk/openai";
+import { z } from "zod";
 import { storage } from "./storage";
-import type { Analysis, InsertClaim, InsertCitation, InsertGeneratedOutput } from "@shared/schema";
+import type { Analysis } from "@shared/schema";
 
-const openai = new OpenAI({
+const openai = createOpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
 });
 
-// Emergency/red flag keywords
 const RED_FLAG_KEYWORDS = [
   "chest pain", "heart attack", "stroke", "can't breathe", "suicidal",
   "overdose", "severe bleeding", "pregnancy bleeding", "seizure",
@@ -15,7 +16,6 @@ const RED_FLAG_KEYWORDS = [
   "crushing chest", "sudden numbness", "slurred speech"
 ];
 
-// Dosage pattern filter
 const DOSAGE_PATTERNS = [
   /\d+\s*(mg|ml|mcg|iu|tablets?|capsules?|pills?|doses?)\s*(per|\/|\s)?\s*(day|daily|hour|hourly)/gi,
   /take\s+\d+\s*(mg|ml|tablet|capsule|pill)/gi,
@@ -35,7 +35,6 @@ function filterDosageInstructions(text: string): string {
   return filtered;
 }
 
-// Get trusted sources context (simplified for hackathon - in production would use vector search)
 async function getTrustedSourcesContext(): Promise<string> {
   const sources = await storage.getAllSourceDocuments();
   if (sources.length === 0) {
@@ -49,89 +48,97 @@ async function getTrustedSourcesContext(): Promise<string> {
   return sources.map(s => `[${s.organization}] ${s.title}: ${s.content}`).join("\n\n");
 }
 
+const ClaimsExtractionSchema = z.object({
+  language: z.string(),
+  topics: z.array(z.string()),
+  claims: z.array(z.object({
+    claim_text: z.string(),
+    claim_type: z.enum(["factual", "medical_advice", "conspiracy", "anecdote", "other"]),
+    topic: z.string(),
+    target_population: z.enum(["general", "pregnancy", "child", "elderly", "chronic_condition"]),
+    urgency_hint: z.enum(["none", "low", "medium", "high"]),
+    potential_harm: z.enum(["low", "medium", "high"]),
+    certainty_in_text: z.number().min(0).max(1),
+  })),
+});
+
+const RiskAssessmentSchema = z.object({
+  overall_severity: z.enum(["low", "medium", "high", "critical"]),
+  per_claim: z.array(z.object({
+    claim_text: z.string(),
+    severity: z.enum(["low", "medium", "high", "critical"]),
+    risk_reason: z.string(),
+    stance: z.enum(["supported", "contradicted", "uncertain", "partially_supported"]),
+    stance_confidence: z.number().min(0).max(1),
+    stance_explanation: z.string(),
+    citations: z.array(z.object({
+      source_org: z.string(),
+      source_title: z.string(),
+      source_url: z.string(),
+      snippet: z.string(),
+      relevance: z.number().min(0).max(1),
+    })),
+  })),
+});
+
+const CounterMessageSchema = z.object({
+  disclaimer: z.string(),
+  what_is_wrong: z.string(),
+  what_we_know: z.string(),
+  what_to_do: z.string(),
+  when_to_seek_care: z.string(),
+  uncertainty_notes: z.string(),
+  outputs: z.array(z.object({
+    format: z.enum(["social_reply", "patient_handout", "clinician_note"]),
+    length: z.enum(["brief", "medium", "detailed"]),
+    content: z.string(),
+  })),
+});
+
 export async function runAnalysisPipeline(analysisId: number): Promise<void> {
   const analysis = await storage.getAnalysis(analysisId);
   if (!analysis) throw new Error("Analysis not found");
 
   try {
-    // Update status to running
     await storage.updateAnalysis(analysisId, { status: "running" });
 
-    // Check for red flags first
     const redFlags = checkRedFlags(analysis.inputText);
     const hasRedFlags = redFlags.length > 0;
 
-    // Step 1: Extract Claims
-    const claimsResponse = await openai.chat.completions.create({
-      model: "gpt-5-mini",
-      messages: [
-        {
-          role: "system",
-          content: `You are a health misinformation analyst. Extract atomic health claims from the text.
-Return JSON with this structure:
-{
-  "language": "en",
-  "topics": ["vaccines", "antibiotics", etc],
-  "claims": [
-    {
-      "claim_text": "the exact claim",
-      "claim_type": "factual|medical_advice|conspiracy|anecdote|other",
-      "topic": "main topic",
-      "target_population": "general|pregnancy|child|elderly|chronic_condition",
-      "urgency_hint": "none|low|medium|high",
-      "potential_harm": "low|medium|high",
-      "certainty_in_text": 0.0-1.0
-    }
-  ]
-}
+    const { object: claimsData } = await generateObject({
+      model: openai("gpt-5-mini"),
+      schema: ClaimsExtractionSchema,
+      system: `You are a health misinformation analyst. Extract atomic health claims from the text.
 Rules:
 - Split combined claims into atomic ones
 - Keep claims close to original wording
-- Do not introduce new facts`
-        },
-        {
-          role: "user",
-          content: analysis.inputText
-        }
-      ],
-      response_format: { type: "json_object" },
-      max_completion_tokens: 2048,
+- Do not introduce new facts`,
+      prompt: analysis.inputText,
     });
-
-    let claimsData;
-    try {
-      claimsData = JSON.parse(claimsResponse.choices[0]?.message?.content || "{}");
-    } catch {
-      claimsData = { claims: [], topics: [] };
-    }
 
     const topics = claimsData.topics || [];
 
-    // Store claims
     const storedClaims: { id: number; claim_text: string }[] = [];
-    for (const claim of claimsData.claims || []) {
+    for (const claim of claimsData.claims) {
       const storedClaim = await storage.createClaim({
         analysisId,
         claimText: claim.claim_text,
-        claimType: claim.claim_type || "other",
+        claimType: claim.claim_type,
         topic: claim.topic,
-        targetPopulation: claim.target_population || "general",
-        urgencyHint: claim.urgency_hint || "none",
-        potentialHarm: claim.potential_harm || "low",
-        certaintyInText: Math.round((claim.certainty_in_text || 0.5) * 100),
+        targetPopulation: claim.target_population,
+        urgencyHint: claim.urgency_hint,
+        potentialHarm: claim.potential_harm,
+        certaintyInText: Math.round(claim.certainty_in_text * 100),
       });
       storedClaims.push({ id: storedClaim.id, claim_text: claim.claim_text });
     }
 
-    // Step 2: Risk Scoring + Evidence
     const sourcesContext = await getTrustedSourcesContext();
     
-    const riskResponse = await openai.chat.completions.create({
-      model: "gpt-5-mini",
-      messages: [
-        {
-          role: "system",
-          content: `You are a health misinformation analyst with access to trusted sources.
+    const { object: riskData } = await generateObject({
+      model: openai("gpt-5-mini"),
+      schema: RiskAssessmentSchema,
+      system: `You are a health misinformation analyst with access to trusted sources.
 Analyze each claim and determine:
 1. Risk level (low/medium/high/critical)
 2. Whether it's supported, contradicted, or uncertain based on evidence
@@ -140,160 +147,74 @@ Analyze each claim and determine:
 Trusted Sources:
 ${sourcesContext}
 
-Return JSON:
-{
-  "overall_severity": "low|medium|high|critical",
-  "per_claim": [
-    {
-      "claim_text": "...",
-      "severity": "low|medium|high|critical",
-      "risk_reason": "why this is risky",
-      "stance": "supported|contradicted|uncertain",
-      "stance_confidence": 0.0-1.0,
-      "stance_explanation": "explanation based on evidence",
-      "citations": [
-        {
-          "source_org": "WHO|CDC|NHS|Journal",
-          "source_title": "title of source",
-          "source_url": "url if available",
-          "snippet": "relevant quote (max 40 words)",
-          "relevance": 0.0-1.0
-        }
-      ]
-    }
-  ]
-}
-
 Rules:
 - If evidence is insufficient, stance should be "uncertain"
 - Critical severity if: advice could cause serious harm, emergency symptoms, medication interference
 - High severity if: could delay proper treatment, affects vulnerable groups
 - Medium severity if: misleading but unlikely to cause direct harm
-- Low severity if: minor inaccuracies with minimal health impact`
-        },
-        {
-          role: "user",
-          content: `Analyze these claims:\n${storedClaims.map(c => `- ${c.claim_text}`).join("\n")}`
-        }
-      ],
-      response_format: { type: "json_object" },
-      max_completion_tokens: 4096,
+- Low severity if: minor inaccuracies with minimal health impact`,
+      prompt: `Analyze these claims:\n${storedClaims.map(c => `- ${c.claim_text}`).join("\n")}`,
     });
 
-    let riskData;
-    try {
-      riskData = JSON.parse(riskResponse.choices[0]?.message?.content || "{}");
-    } catch {
-      riskData = { overall_severity: "medium", per_claim: [] };
-    }
+    const overallSeverity = hasRedFlags ? "critical" : riskData.overall_severity;
 
-    // Override to critical if red flags detected
-    const overallSeverity = hasRedFlags ? "critical" : (riskData.overall_severity || "medium");
-
-    // Update claims with risk data and citations
-    for (const claimData of riskData.per_claim || []) {
-      // Find matching claim by text similarity
+    for (const claimData of riskData.per_claim) {
       const storedClaim = storedClaims.find(c => {
         const claimTextLower = c.claim_text.toLowerCase();
-        const riskClaimLower = (claimData.claim_text || "").toLowerCase();
+        const riskClaimLower = claimData.claim_text.toLowerCase();
         return claimTextLower.includes(riskClaimLower.substring(0, 30)) || 
                riskClaimLower.includes(claimTextLower.substring(0, 30));
       });
       
       if (storedClaim) {
-        // Update existing claim with stance/severity (not create new one)
         await storage.updateClaim(storedClaim.id, {
           stance: claimData.stance,
-          stanceConfidence: Math.round((claimData.stance_confidence || 0.5) * 100),
+          stanceConfidence: Math.round(claimData.stance_confidence * 100),
           stanceExplanation: claimData.stance_explanation,
           severity: claimData.severity,
           riskReason: claimData.risk_reason,
         });
 
-        // Store citations linked to the existing claim
-        for (const citation of claimData.citations || []) {
+        for (const citation of claimData.citations) {
           await storage.createCitation({
             claimId: storedClaim.id,
             sourceOrg: citation.source_org,
             sourceTitle: citation.source_title,
-            sourceUrl: citation.source_url,
+            sourceUrl: citation.source_url || "",
             snippet: citation.snippet,
-            relevance: Math.round((citation.relevance || 0.8) * 100),
+            relevance: Math.round(citation.relevance * 100),
           });
         }
       }
     }
 
-    // Step 3: Generate Counter-Messages
-    const counterResponse = await openai.chat.completions.create({
-      model: "gpt-5-mini",
-      messages: [
-        {
-          role: "system",
-          content: `You are a health communication expert. Generate counter-messages for health misinformation.
+    const { object: counterData } = await generateObject({
+      model: openai("gpt-5-mini"),
+      schema: CounterMessageSchema,
+      system: `You are a health communication expert. Generate counter-messages for health misinformation.
 Settings: Region=${analysis.region}, Tone=${analysis.tone}, Audience=${analysis.audience}, Platform=${analysis.platform}
 
-Return JSON:
-{
-  "disclaimer": "Educational content only - consult healthcare provider",
-  "what_is_wrong": "What's inaccurate or missing in the claims",
-  "what_we_know": "What current evidence shows",
-  "what_to_do": "Safe general guidance (NO dosing!)",
-  "when_to_seek_care": "Red flags requiring medical attention",
-  "uncertainty_notes": "What we're still uncertain about",
-  "outputs": [
-    {
-      "format": "social_reply|handout|clinician_note",
-      "length": "short|medium|long",
-      "content": "the formatted response"
-    }
-  ]
-}
-
-Generate 9 outputs (3 formats x 3 lengths).
+Generate 9 outputs (3 formats x 3 lengths): social_reply, patient_handout, clinician_note in brief, medium, detailed lengths.
 
 Critical Rules:
 - NEVER provide medication dosages or specific treatment instructions
 - NEVER diagnose conditions
 - Always recommend consulting healthcare providers
 - If critical/emergency: focus on immediate safety, not debate
-- Include [1], [2] etc for citations in content`
-        },
-        {
-          role: "user",
-          content: `Original text: ${analysis.inputText}
+- Include [1], [2] etc for citations in content`,
+      prompt: `Original text: ${analysis.inputText}
 
 Claims analysis:
 ${JSON.stringify(riskData.per_claim, null, 2)}
 
-${hasRedFlags ? `CRITICAL: Red flags detected: ${redFlags.join(", ")}. Prioritize safety messaging.` : ""}`
-        }
-      ],
-      response_format: { type: "json_object" },
-      max_completion_tokens: 8192,
+${hasRedFlags ? `CRITICAL: Red flags detected: ${redFlags.join(", ")}. Prioritize safety messaging.` : ""}`,
     });
 
-    let counterData;
-    try {
-      counterData = JSON.parse(counterResponse.choices[0]?.message?.content || "{}");
-    } catch {
-      counterData = {
-        disclaimer: "This is for educational purposes only. Consult a healthcare provider.",
-        what_is_wrong: "Unable to analyze.",
-        what_we_know: "Please consult trusted health sources.",
-        what_to_do: "Speak with a healthcare provider.",
-        when_to_seek_care: "If you have health concerns, contact a medical professional.",
-        outputs: []
-      };
-    }
-
-    // Filter dosage instructions from outputs
-    const filteredOutputs = (counterData.outputs || []).map((o: any) => ({
+    const filteredOutputs = counterData.outputs.map(o => ({
       ...o,
-      content: filterDosageInstructions(o.content || "")
+      content: filterDosageInstructions(o.content)
     }));
 
-    // Store generated outputs
     for (const output of filteredOutputs) {
       await storage.createGeneratedOutput({
         analysisId,
@@ -303,19 +224,18 @@ ${hasRedFlags ? `CRITICAL: Red flags detected: ${redFlags.join(", ")}. Prioritiz
       });
     }
 
-    // Update analysis with final results
     await storage.updateAnalysis(analysisId, {
       status: "done",
       overallSeverity,
       redFlagsDetected: hasRedFlags,
       redFlags: hasRedFlags ? redFlags : [],
       topics,
-      disclaimer: counterData.disclaimer || "Educational use only.",
-      whatIsWrong: filterDosageInstructions(counterData.what_is_wrong || ""),
-      whatWeKnow: filterDosageInstructions(counterData.what_we_know || ""),
-      whatToDo: filterDosageInstructions(counterData.what_to_do || ""),
-      whenToSeekCare: counterData.when_to_seek_care || "",
-      uncertaintyNotes: counterData.uncertainty_notes || "",
+      disclaimer: counterData.disclaimer,
+      whatIsWrong: filterDosageInstructions(counterData.what_is_wrong),
+      whatWeKnow: filterDosageInstructions(counterData.what_we_know),
+      whatToDo: filterDosageInstructions(counterData.what_to_do),
+      whenToSeekCare: counterData.when_to_seek_care,
+      uncertaintyNotes: counterData.uncertainty_notes,
       completedAt: new Date(),
     });
 
