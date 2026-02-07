@@ -57,7 +57,7 @@ export default function AnalysisPage() {
 
   if (isLoading) {
     return (
-      <div className="max-w-5xl mx-auto p-6 space-y-6">
+      <div className="max-w-6xl mx-auto p-6 md:p-8 space-y-6">
         <Skeleton className="h-10 w-48" />
         <Skeleton className="h-24 w-full" />
         <Skeleton className="h-64 w-full" />
@@ -68,8 +68,8 @@ export default function AnalysisPage() {
 
   if (!analysis) {
     return (
-      <div className="max-w-5xl mx-auto p-6">
-        <Card>
+      <div className="max-w-6xl mx-auto p-6 md:p-8">
+        <Card className="surface-panel">
           <CardContent className="p-12 text-center">
             <h2 className="text-xl font-semibold mb-2">Analysis not found</h2>
             <p className="text-muted-foreground mb-4">
@@ -88,7 +88,7 @@ export default function AnalysisPage() {
   }
 
   return (
-    <div className="max-w-5xl mx-auto p-6 space-y-6">
+    <div className="max-w-6xl mx-auto p-6 md:p-8 space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-4">
         <div className="flex items-center gap-4">
           <Link href="/">
@@ -123,7 +123,7 @@ export default function AnalysisPage() {
         </div>
       </div>
 
-      <Card>
+      <Card className="surface-panel">
         <CardHeader className="pb-4">
           <CardTitle className="text-lg">Analysis Progress</CardTitle>
         </CardHeader>
@@ -170,7 +170,7 @@ export default function AnalysisPage() {
         </div>
       )}
 
-      <Card>
+      <Card className="surface-panel">
         <CardHeader className="pb-2">
           <CardTitle className="text-lg">Original Input</CardTitle>
         </CardHeader>

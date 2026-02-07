@@ -7,6 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { BackgroundBeams } from "@/components/ui/background-beams";
 import {
   Select,
   SelectContent,
@@ -75,22 +76,23 @@ export default function HomePage() {
   };
 
   return (
-    <div className="min-h-full bg-gradient-to-b from-background to-muted/20">
-      <div className="max-w-4xl mx-auto p-6 space-y-8">
-        <div className="text-center space-y-4 py-8">
-          <div className="flex items-center justify-center gap-3">
-            <div className="flex h-14 w-14 items-center justify-center rounded-lg bg-primary">
+    <div className="min-h-full">
+      <div className="max-w-5xl mx-auto p-6 md:p-8 space-y-8">
+        <section className="section-shell relative overflow-hidden text-center space-y-4 py-8">
+          <BackgroundBeams className="opacity-35" />
+          <div className="relative z-10 flex items-center justify-center gap-3">
+            <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-primary">
               <Shield className="h-7 w-7 text-primary-foreground" />
             </div>
-            <h1 className="text-4xl font-bold tracking-tight">ClearHealth</h1>
+            <h1 className="font-display text-4xl md:text-5xl font-semibold tracking-tight">ClearHealth</h1>
           </div>
-          <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
+          <p className="relative z-10 text-lg text-muted-foreground max-w-2xl mx-auto text-balance">
             Detect health misinformation and get evidence-based counter-messages. 
             Paste a claim, get the facts.
           </p>
-        </div>
+        </section>
 
-        <Card className="border-2">
+        <Card className="surface-panel">
           <CardHeader className="pb-4">
             <div className="flex items-center justify-between flex-wrap gap-4">
               <div>
@@ -225,7 +227,7 @@ Example: 'Taking antibiotics will help cure a cold faster.'"
           </CardContent>
         </Card>
 
-        <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground p-4 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-800">
+        <div className="section-shell flex items-center justify-center gap-2 text-sm text-muted-foreground">
           <AlertTriangle className="h-4 w-4 text-amber-600" />
           <span>
             <strong>Educational use only.</strong> This tool is not a substitute for professional medical advice.

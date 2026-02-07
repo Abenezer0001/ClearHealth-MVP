@@ -1,13 +1,4 @@
-import { db } from "./db";
-import { eq, desc, sql, and } from "drizzle-orm";
 import {
-  analyses,
-  claims,
-  citations,
-  generatedOutputs,
-  feedbacks,
-  sourceDocuments,
-  exampleInputs,
   type Analysis,
   type InsertAnalysis,
   type Claim,
@@ -24,41 +15,29 @@ import {
   type InsertExampleInput,
   type AnalysisWithDetails,
 } from "@shared/schema";
+import { getMongoDb, getNextSequence } from "./mongo";
+
+type WithMongoId<T> = T & { _id?: string };
 
 export interface IStorage {
-  // Analyses
   createAnalysis(data: InsertAnalysis): Promise<Analysis>;
   getAnalysis(id: number): Promise<Analysis | undefined>;
   getAnalysisWithDetails(id: number): Promise<AnalysisWithDetails | undefined>;
   getAllAnalyses(): Promise<Analysis[]>;
   updateAnalysis(id: number, data: Partial<Analysis>): Promise<Analysis | undefined>;
-
-  // Claims
   createClaim(data: InsertClaim): Promise<Claim>;
   updateClaim(id: number, data: Partial<Claim>): Promise<Claim | undefined>;
   getClaimsByAnalysis(analysisId: number): Promise<Claim[]>;
-
-  // Citations
   createCitation(data: InsertCitation): Promise<Citation>;
   getCitationsByClaim(claimId: number): Promise<Citation[]>;
-
-  // Generated Outputs
   createGeneratedOutput(data: InsertGeneratedOutput): Promise<GeneratedOutput>;
   getOutputsByAnalysis(analysisId: number): Promise<GeneratedOutput[]>;
-
-  // Feedback
   createFeedback(data: InsertFeedback): Promise<Feedback>;
   getFeedbackByAnalysis(analysisId: number): Promise<Feedback[]>;
-
-  // Source Documents
   createSourceDocument(data: InsertSourceDocument): Promise<SourceDocument>;
   getAllSourceDocuments(): Promise<SourceDocument[]>;
-
-  // Example Inputs
   createExampleInput(data: InsertExampleInput): Promise<ExampleInput>;
   getAllExampleInputs(): Promise<ExampleInput[]>;
-
-  // Admin Stats
   getAdminStats(): Promise<{
     totalAnalyses: number;
     criticalCount: number;
@@ -78,30 +57,65 @@ export interface IStorage {
   }>;
 }
 
+function stripMongoId<T extends { _id?: unknown }>(doc: T): Omit<T, "_id"> {
+  const { _id: _ignored, ...rest } = doc;
+  return rest;
+}
+
+function sortByCreatedAtDesc<T extends { createdAt: Date }>(items: T[]): T[] {
+  return [...items].sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+  );
+}
+
 export const storage: IStorage = {
-  // Analyses
   async createAnalysis(data: InsertAnalysis): Promise<Analysis> {
-    const [analysis] = await db.insert(analyses).values(data).returning();
+    const db = await getMongoDb();
+    const id = await getNextSequence("analyses");
+    const analysis: Analysis = {
+      id,
+      inputType: data.inputType,
+      inputText: data.inputText,
+      inputUrl: data.inputUrl ?? null,
+      region: data.region ?? "WHO",
+      tone: data.tone ?? "neutral",
+      audience: data.audience ?? "general",
+      platform: data.platform ?? "general",
+      status: data.status ?? "pending",
+      overallSeverity: data.overallSeverity ?? null,
+      redFlagsDetected: data.redFlagsDetected ?? false,
+      redFlags: data.redFlags ?? null,
+      topics: data.topics ?? null,
+      disclaimer: data.disclaimer ?? null,
+      whatIsWrong: data.whatIsWrong ?? null,
+      whatWeKnow: data.whatWeKnow ?? null,
+      whatToDo: data.whatToDo ?? null,
+      whenToSeekCare: data.whenToSeekCare ?? null,
+      uncertaintyNotes: data.uncertaintyNotes ?? null,
+      createdAt: new Date(),
+      completedAt: data.completedAt ?? null,
+    };
+    await db.collection<WithMongoId<Analysis>>("analyses").insertOne(analysis);
     return analysis;
   },
 
   async getAnalysis(id: number): Promise<Analysis | undefined> {
-    const [analysis] = await db.select().from(analyses).where(eq(analyses.id, id));
-    return analysis;
+    const db = await getMongoDb();
+    const analysis = await db.collection<WithMongoId<Analysis>>("analyses").findOne({ id });
+    return analysis ? stripMongoId(analysis) : undefined;
   },
 
   async getAnalysisWithDetails(id: number): Promise<AnalysisWithDetails | undefined> {
-    const [analysis] = await db.select().from(analyses).where(eq(analyses.id, id));
+    const analysis = await this.getAnalysis(id);
     if (!analysis) return undefined;
 
-    const claimsList = await db.select().from(claims).where(eq(claims.analysisId, id));
-    const outputs = await db.select().from(generatedOutputs).where(eq(generatedOutputs.analysisId, id));
-
+    const claimsList = await this.getClaimsByAnalysis(id);
+    const outputs = await this.getOutputsByAnalysis(id);
     const claimsWithCitations = await Promise.all(
-      claimsList.map(async (claim) => {
-        const citationsList = await db.select().from(citations).where(eq(citations.claimId, claim.id));
-        return { ...claim, citations: citationsList };
-      })
+      claimsList.map(async (claim) => ({
+        ...claim,
+        citations: await this.getCitationsByClaim(claim.id),
+      })),
     );
 
     return {
@@ -112,88 +126,180 @@ export const storage: IStorage = {
   },
 
   async getAllAnalyses(): Promise<Analysis[]> {
-    return db.select().from(analyses).orderBy(desc(analyses.createdAt));
+    const db = await getMongoDb();
+    const analyses = await db.collection<WithMongoId<Analysis>>("analyses").find({}).toArray();
+    return sortByCreatedAtDesc(analyses.map(stripMongoId));
   },
 
   async updateAnalysis(id: number, data: Partial<Analysis>): Promise<Analysis | undefined> {
-    const [updated] = await db.update(analyses).set(data).where(eq(analyses.id, id)).returning();
-    return updated;
+    const db = await getMongoDb();
+    await db.collection<WithMongoId<Analysis>>("analyses").updateOne({ id }, { $set: data });
+    return this.getAnalysis(id);
   },
 
-  // Claims
   async createClaim(data: InsertClaim): Promise<Claim> {
-    const [claim] = await db.insert(claims).values(data).returning();
+    const db = await getMongoDb();
+    const id = await getNextSequence("claims");
+    const claim: Claim = {
+      id,
+      analysisId: data.analysisId,
+      claimText: data.claimText,
+      claimType: data.claimType,
+      topic: data.topic ?? null,
+      targetPopulation: data.targetPopulation ?? "general",
+      urgencyHint: data.urgencyHint ?? "none",
+      potentialHarm: data.potentialHarm ?? "low",
+      certaintyInText: data.certaintyInText ?? 50,
+      stance: data.stance ?? null,
+      stanceConfidence: data.stanceConfidence ?? null,
+      stanceExplanation: data.stanceExplanation ?? null,
+      severity: data.severity ?? null,
+      riskReason: data.riskReason ?? null,
+      createdAt: new Date(),
+    };
+    await db.collection<WithMongoId<Claim>>("claims").insertOne(claim);
     return claim;
   },
 
   async updateClaim(id: number, data: Partial<Claim>): Promise<Claim | undefined> {
-    const [updated] = await db.update(claims).set(data).where(eq(claims.id, id)).returning();
-    return updated;
+    const db = await getMongoDb();
+    await db.collection<WithMongoId<Claim>>("claims").updateOne({ id }, { $set: data });
+    const claim = await db.collection<WithMongoId<Claim>>("claims").findOne({ id });
+    return claim ? stripMongoId(claim) : undefined;
   },
 
   async getClaimsByAnalysis(analysisId: number): Promise<Claim[]> {
-    return db.select().from(claims).where(eq(claims.analysisId, analysisId));
+    const db = await getMongoDb();
+    const items = await db.collection<WithMongoId<Claim>>("claims").find({ analysisId }).toArray();
+    return items.map(stripMongoId);
   },
 
-  // Citations
   async createCitation(data: InsertCitation): Promise<Citation> {
-    const [citation] = await db.insert(citations).values(data).returning();
+    const db = await getMongoDb();
+    const id = await getNextSequence("citations");
+    const citation: Citation = {
+      id,
+      claimId: data.claimId,
+      sourceOrg: data.sourceOrg,
+      sourceTitle: data.sourceTitle,
+      sourceUrl: data.sourceUrl ?? null,
+      snippet: data.snippet ?? null,
+      relevance: data.relevance ?? 80,
+      createdAt: new Date(),
+    };
+    await db.collection<WithMongoId<Citation>>("citations").insertOne(citation);
     return citation;
   },
 
   async getCitationsByClaim(claimId: number): Promise<Citation[]> {
-    return db.select().from(citations).where(eq(citations.claimId, claimId));
+    const db = await getMongoDb();
+    const items = await db
+      .collection<WithMongoId<Citation>>("citations")
+      .find({ claimId })
+      .toArray();
+    return items.map(stripMongoId);
   },
 
-  // Generated Outputs
   async createGeneratedOutput(data: InsertGeneratedOutput): Promise<GeneratedOutput> {
-    const [output] = await db.insert(generatedOutputs).values(data).returning();
+    const db = await getMongoDb();
+    const id = await getNextSequence("generated_outputs");
+    const output: GeneratedOutput = {
+      id,
+      analysisId: data.analysisId,
+      format: data.format,
+      length: data.length,
+      content: data.content,
+      createdAt: new Date(),
+    };
+    await db.collection<WithMongoId<GeneratedOutput>>("generated_outputs").insertOne(output);
     return output;
   },
 
   async getOutputsByAnalysis(analysisId: number): Promise<GeneratedOutput[]> {
-    return db.select().from(generatedOutputs).where(eq(generatedOutputs.analysisId, analysisId));
+    const db = await getMongoDb();
+    const items = await db
+      .collection<WithMongoId<GeneratedOutput>>("generated_outputs")
+      .find({ analysisId })
+      .toArray();
+    return items.map(stripMongoId);
   },
 
-  // Feedback
   async createFeedback(data: InsertFeedback): Promise<Feedback> {
-    const [feedback] = await db.insert(feedbacks).values(data).returning();
+    const db = await getMongoDb();
+    const id = await getNextSequence("feedbacks");
+    const feedback: Feedback = {
+      id,
+      analysisId: data.analysisId,
+      rating: data.rating,
+      comment: data.comment ?? null,
+      createdAt: new Date(),
+    };
+    await db.collection<WithMongoId<Feedback>>("feedbacks").insertOne(feedback);
     return feedback;
   },
 
   async getFeedbackByAnalysis(analysisId: number): Promise<Feedback[]> {
-    return db.select().from(feedbacks).where(eq(feedbacks.analysisId, analysisId));
+    const db = await getMongoDb();
+    const items = await db.collection<WithMongoId<Feedback>>("feedbacks").find({ analysisId }).toArray();
+    return items.map(stripMongoId);
   },
 
-  // Source Documents
   async createSourceDocument(data: InsertSourceDocument): Promise<SourceDocument> {
-    const [doc] = await db.insert(sourceDocuments).values(data).returning();
+    const db = await getMongoDb();
+    const id = await getNextSequence("source_documents");
+    const doc: SourceDocument = {
+      id,
+      title: data.title,
+      organization: data.organization,
+      url: data.url ?? null,
+      content: data.content,
+      category: data.category ?? null,
+      createdAt: new Date(),
+    };
+    await db.collection<WithMongoId<SourceDocument>>("source_documents").insertOne(doc);
     return doc;
   },
 
   async getAllSourceDocuments(): Promise<SourceDocument[]> {
-    return db.select().from(sourceDocuments);
+    const db = await getMongoDb();
+    const items = await db.collection<WithMongoId<SourceDocument>>("source_documents").find({}).toArray();
+    return items.map(stripMongoId);
   },
 
-  // Example Inputs
   async createExampleInput(data: InsertExampleInput): Promise<ExampleInput> {
-    const [example] = await db.insert(exampleInputs).values(data).returning();
+    const db = await getMongoDb();
+    const id = await getNextSequence("example_inputs");
+    const example: ExampleInput = {
+      id,
+      title: data.title,
+      content: data.content,
+      category: data.category,
+      expectedSeverity: data.expectedSeverity,
+      createdAt: new Date(),
+    };
+    await db.collection<WithMongoId<ExampleInput>>("example_inputs").insertOne(example);
     return example;
   },
 
   async getAllExampleInputs(): Promise<ExampleInput[]> {
-    return db.select().from(exampleInputs);
+    const db = await getMongoDb();
+    const items = await db.collection<WithMongoId<ExampleInput>>("example_inputs").find({}).toArray();
+    return items.map(stripMongoId);
   },
 
-  // Admin Stats
   async getAdminStats() {
-    const allAnalyses = await db.select().from(analyses);
-    const allFeedbacks = await db.select().from(feedbacks);
+    const [allAnalyses, allFeedbacks] = await Promise.all([
+      this.getAllAnalyses(),
+      (async () => {
+        const db = await getMongoDb();
+        const items = await db.collection<WithMongoId<Feedback>>("feedbacks").find({}).toArray();
+        return items.map(stripMongoId);
+      })(),
+    ]);
 
     const totalAnalyses = allAnalyses.length;
     const criticalCount = allAnalyses.filter((a) => a.overallSeverity === "critical").length;
 
-    // Topic frequency
     const topicCounts: Record<string, number> = {};
     allAnalyses.forEach((a) => {
       (a.topics || []).forEach((topic) => {
@@ -205,7 +311,6 @@ export const storage: IStorage = {
       .sort((a, b) => b.count - a.count)
       .slice(0, 10);
 
-    // Severity distribution
     const severityCounts: Record<string, number> = { low: 0, medium: 0, high: 0, critical: 0 };
     allAnalyses.forEach((a) => {
       if (a.overallSeverity && severityCounts[a.overallSeverity] !== undefined) {
@@ -216,10 +321,9 @@ export const storage: IStorage = {
       .map(([severity, count]) => ({ severity, count }))
       .filter((s) => s.count > 0);
 
-    // Recent critical
-    const recentCritical = allAnalyses
-      .filter((a) => a.overallSeverity === "critical")
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    const recentCritical = sortByCreatedAtDesc(
+      allAnalyses.filter((a) => a.overallSeverity === "critical"),
+    )
       .slice(0, 5)
       .map((a) => ({
         id: a.id,
@@ -228,7 +332,6 @@ export const storage: IStorage = {
         topics: a.topics,
       }));
 
-    // Feedback summary
     const feedbackSummary = {
       helpful: allFeedbacks.filter((f) => f.rating === "helpful").length,
       notHelpful: allFeedbacks.filter((f) => f.rating === "not_helpful").length,

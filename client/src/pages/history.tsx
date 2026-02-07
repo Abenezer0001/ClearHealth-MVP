@@ -38,7 +38,7 @@ export default function HistoryPage() {
   });
 
   return (
-    <div className="max-w-5xl mx-auto p-6 space-y-6">
+    <div className="max-w-6xl mx-auto p-6 md:p-8 space-y-6">
       <div className="flex items-center gap-3">
         <div className="flex h-10 w-10 items-center justify-center rounded-md bg-primary">
           <History className="h-5 w-5 text-primary-foreground" />
@@ -51,7 +51,7 @@ export default function HistoryPage() {
         </div>
       </div>
 
-      <Card>
+      <Card className="surface-panel">
         <CardContent className="p-4">
           <div className="flex flex-wrap gap-4">
             <div className="relative flex-1 min-w-[200px]">
@@ -90,7 +90,7 @@ export default function HistoryPage() {
         <div className="space-y-4">
           {filteredAnalyses.map((analysis) => (
             <Link key={analysis.id} href={`/analysis/${analysis.id}`}>
-              <Card className="hover-elevate cursor-pointer transition-colors">
+              <Card className="surface-panel hover-elevate cursor-pointer transition-colors">
                 <CardContent className="p-4">
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex-1 min-w-0 space-y-2">
@@ -128,7 +128,7 @@ export default function HistoryPage() {
           ))}
         </div>
       ) : (
-        <Card>
+        <Card className="surface-panel">
           <CardContent className="p-12 text-center">
             <FileText className="h-12 w-12 mx-auto text-muted-foreground/50 mb-4" />
             <h3 className="text-lg font-semibold mb-2">No analyses found</h3>

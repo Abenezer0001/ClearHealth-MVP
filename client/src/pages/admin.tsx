@@ -39,7 +39,7 @@ export default function AdminPage() {
 
   if (isLoading) {
     return (
-      <div className="max-w-6xl mx-auto p-6 space-y-6">
+      <div className="max-w-6xl mx-auto p-6 md:p-8 space-y-6">
         <Skeleton className="h-10 w-48" />
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           {[1, 2, 3, 4].map((i) => (
@@ -64,7 +64,7 @@ export default function AdminPage() {
   const totalSeverity = stats?.severityDistribution?.reduce((acc, s) => acc + s.count, 0) || 1;
 
   return (
-    <div className="max-w-6xl mx-auto p-6 space-y-6">
+    <div className="max-w-6xl mx-auto p-6 md:p-8 space-y-6">
       <div className="flex items-center gap-3">
         <div className="flex h-10 w-10 items-center justify-center rounded-md bg-primary">
           <BarChart3 className="h-5 w-5 text-primary-foreground" />
@@ -78,7 +78,7 @@ export default function AdminPage() {
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <Card>
+        <Card className="surface-panel">
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-sm font-medium">Total Analyses</CardTitle>
             <TrendingUp className="h-4 w-4 text-muted-foreground" />
@@ -89,7 +89,7 @@ export default function AdminPage() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="surface-panel">
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-sm font-medium">Critical Alerts</CardTitle>
             <AlertTriangle className="h-4 w-4 text-red-500" />
@@ -100,7 +100,7 @@ export default function AdminPage() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="surface-panel">
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-sm font-medium">Helpful Rating</CardTitle>
             <MessageSquare className="h-4 w-4 text-muted-foreground" />
@@ -115,7 +115,7 @@ export default function AdminPage() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="surface-panel">
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-sm font-medium">Top Topic</CardTitle>
             <TrendingUp className="h-4 w-4 text-muted-foreground" />
@@ -132,7 +132,7 @@ export default function AdminPage() {
       </div>
 
       <div className="grid gap-6 md:grid-cols-2">
-        <Card>
+        <Card className="surface-panel">
           <CardHeader>
             <CardTitle className="text-lg">Severity Distribution</CardTitle>
           </CardHeader>
@@ -157,7 +157,7 @@ export default function AdminPage() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="surface-panel">
           <CardHeader>
             <CardTitle className="text-lg">Top Misinformation Topics</CardTitle>
           </CardHeader>
@@ -183,7 +183,7 @@ export default function AdminPage() {
         </Card>
       </div>
 
-      <Card>
+      <Card className="surface-panel">
         <CardHeader>
           <CardTitle className="text-lg flex items-center gap-2">
             <AlertTriangle className="h-5 w-5 text-red-500" />

@@ -1,8 +1,84 @@
 import { db } from "./db";
 import { sourceDocuments, exampleInputs, analyses, claims, citations, generatedOutputs } from "@shared/schema";
 import { eq } from "drizzle-orm";
+import { storage } from "./storage";
 
 export async function seedDatabase() {
+  const dbUrl = process.env.DATABASE_URL ?? "";
+  const isMongo = dbUrl.startsWith("mongodb://") || dbUrl.startsWith("mongodb+srv://");
+
+  if (isMongo) {
+    const existingSources = await storage.getAllSourceDocuments();
+    if (existingSources.length > 0) {
+      console.log("MongoDB already seeded, skipping...");
+      return;
+    }
+
+    console.log("Seeding MongoDB with trusted sources and examples...");
+
+    const trustedSources = [
+      {
+        title: "Antibiotics: When they can and can't help",
+        organization: "CDC",
+        url: "https://www.cdc.gov/antibiotic-use/",
+        content:
+          "Antibiotics fight infections caused by bacteria. They do not work against infections caused by viruses, which cause colds and flu.",
+        category: "antibiotics",
+      },
+      {
+        title: "Vaccine Safety: Scientific Review",
+        organization: "WHO",
+        url: "https://www.who.int/vaccine_safety/en/",
+        content:
+          "Extensive research has shown no link between vaccines and autism. Vaccines are tested and continuously monitored for safety.",
+        category: "vaccines",
+      },
+      {
+        title: "COVID-19 Vaccine Safety",
+        organization: "WHO",
+        url: "https://www.who.int/emergencies/diseases/novel-coronavirus-2019/covid-19-vaccines",
+        content:
+          "COVID-19 vaccines do not modify your DNA. mRNA does not enter the cell nucleus and is broken down by the body.",
+        category: "vaccines",
+      },
+    ];
+
+    for (const source of trustedSources) {
+      await storage.createSourceDocument(source);
+    }
+
+    const examples = [
+      {
+        title: "Antibiotics for Cold",
+        content:
+          "You should take antibiotics when you have a cold. They'll help you get better faster.",
+        category: "antibiotics",
+        expectedSeverity: "high",
+      },
+      {
+        title: "Vaccines and Autism",
+        content:
+          "Studies have proven that childhood vaccines cause autism in children.",
+        category: "vaccines",
+        expectedSeverity: "high",
+      },
+      {
+        title: "Baby Hydration",
+        content:
+          "Babies under 6 months should drink extra water, especially in hot weather.",
+        category: "pediatrics",
+        expectedSeverity: "high",
+      },
+    ];
+
+    for (const example of examples) {
+      await storage.createExampleInput(example);
+    }
+
+    console.log("MongoDB seeded successfully!");
+    return;
+  }
+
   // Check if already seeded
   const existingSources = await db.select().from(sourceDocuments).limit(1);
   if (existingSources.length > 0) {
