@@ -241,7 +241,7 @@ export default function ConnectEHRPage() {
         <div className="min-h-full">
             <div className="max-w-4xl mx-auto p-6 md:p-8 space-y-8">
                 {/* Header */}
-                <section className="section-shell text-center space-y-4 py-8">
+                <section className="section-shell text-center space-y-4 py-8" data-testid="section-connect-ehr-header">
                     <div className="flex items-center justify-center gap-3">
                         <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary">
                             <Heart className="h-7 w-7 text-primary-foreground" />
@@ -262,7 +262,7 @@ export default function ConnectEHRPage() {
 
                 {/* Connection Status */}
                 {connectedPatientId && patientData?.profile ? (
-                    <Card className="surface-panel border-emerald-500/30">
+                    <Card className="surface-panel border-emerald-500/30" data-testid="card-connected-record">
                         <CardHeader className="pb-4">
                             <div className="flex items-center justify-between">
                                 <div className="flex items-center gap-3">
@@ -306,7 +306,7 @@ export default function ConnectEHRPage() {
                         </CardContent>
                     </Card>
                 ) : patientLoading ? (
-                    <Card className="surface-panel">
+                    <Card className="surface-panel" data-testid="card-connect-providers">
                         <CardHeader>
                             <Skeleton className="h-6 w-48" />
                             <Skeleton className="h-4 w-32" />
@@ -318,7 +318,7 @@ export default function ConnectEHRPage() {
                     </Card>
                 ) : (
                     /* Provider Selection */
-                    <Card className="surface-panel">
+                    <Card className="surface-panel" data-testid="card-connect-providers">
                         <CardHeader>
                             <CardTitle className="text-xl">Select Your Provider</CardTitle>
                             <CardDescription>
@@ -326,12 +326,13 @@ export default function ConnectEHRPage() {
                             </CardDescription>
                         </CardHeader>
                         <CardContent className="space-y-4">
-                            {providersData?.providers.map((provider) => (
+                            {providersData?.providers.map((provider, index) => (
                                 <button
                                     type="button"
                                     key={provider.id}
                                     onClick={() => connectMutation.mutate(provider.id)}
                                     disabled={isConnecting}
+                                    data-testid={index === 0 ? "button-connect-provider" : undefined}
                                     className="w-full flex items-center justify-between p-4 rounded-lg border border-border bg-card hover:bg-accent hover:border-primary/50 transition-colors disabled:opacity-50"
                                 >
                                     <div className="flex items-center gap-4">
@@ -365,7 +366,7 @@ export default function ConnectEHRPage() {
                 )}
 
                 {/* Info Card */}
-                <Card className="surface-panel">
+                <Card className="surface-panel" data-testid="card-connect-how-it-works">
                     <CardHeader>
                         <CardTitle className="text-lg flex items-center gap-2">
                             <AlertCircle className="h-5 w-5 text-primary" />

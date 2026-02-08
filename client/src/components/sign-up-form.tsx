@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import { useLocation } from "wouter";
 import { Loader2, UserPlus } from "lucide-react";
 import { authClient } from "@/lib/auth-client";
+import { getPreAuthRole } from "@/lib/pre-auth-role";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -26,6 +27,17 @@ export default function SignUpForm({ onSwitchToSignIn }: SignUpFormProps) {
     event.preventDefault();
     if (!canSubmit || isSubmitting) return;
 
+    const selectedRole = getPreAuthRole();
+    if (!selectedRole) {
+      toast({
+        variant: "destructive",
+        title: "Choose a role first",
+        description: "Select Patient or Coordinator before creating an account.",
+      });
+      setLocation("/role-selection");
+      return;
+    }
+
     setIsSubmitting(true);
     await authClient.signUp.email(
       {
@@ -34,11 +46,12 @@ export default function SignUpForm({ onSwitchToSignIn }: SignUpFormProps) {
         password,
       },
       {
-        onSuccess: () => {
+        onSuccess: async () => {
           toast({
             title: "Account created",
             description: "Your account is ready. You are now signed in.",
           });
+          // Role sync now happens centrally in App after auth/session settles.
           setLocation("/");
         },
         onError: (error) => {
@@ -52,6 +65,8 @@ export default function SignUpForm({ onSwitchToSignIn }: SignUpFormProps) {
     );
     setIsSubmitting(false);
   };
+
+  const selectedRole = getPreAuthRole();
 
   return (
     <Card className="surface-panel w-full">
@@ -114,6 +129,9 @@ export default function SignUpForm({ onSwitchToSignIn }: SignUpFormProps) {
         </form>
         <Button variant="ghost" className="mt-4 w-full underline-offset-2 hover:underline" onClick={onSwitchToSignIn}>
           Already have an account? Sign in
+        </Button>
+        <Button variant="ghost" className="mt-1 w-full underline-offset-2 hover:underline" onClick={() => setLocation("/role-selection")}>
+          {selectedRole ? `Change role (currently ${selectedRole})` : "Choose role"}
         </Button>
       </CardContent>
     </Card>

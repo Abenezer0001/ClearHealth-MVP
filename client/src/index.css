@@ -87,6 +87,21 @@
   --destructive-border: hsl(from hsl(var(--destructive)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
 }
 
+@keyframes trialatlas-tour-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 hsl(var(--primary) / 0.45);
+  }
+  50% {
+    box-shadow: 0 0 0 8px hsl(var(--primary) / 0.18);
+  }
+}
+
+.trialatlas-tour-highlight {
+  border-radius: 0.75rem;
+  animation: trialatlas-tour-pulse 1.3s ease-in-out infinite;
+}
+
 .dark {
   --button-outline: rgba(255,255,255, .10);
   --badge-outline: rgba(255,255,255, .05);

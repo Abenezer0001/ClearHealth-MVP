@@ -15,6 +15,7 @@ import {
   clearStoredToken,
 } from "./smart-fhir";
 import { getMongoDb, getNextSequence } from "./mongo";
+import { findUserBySessionId } from "./user-record-lookup";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -77,9 +78,14 @@ export async function registerRoutes(
         return res.status(401).json({ error: "Unauthorized" });
       }
 
-      // Fetch user directly from database to get current role
       const db = await getMongoDb();
-      const dbUser = await db.collection("user").findOne({ id: session.user.id });
+      const userCollection = db.collection("user");
+      const dbUser = await findUserBySessionId(userCollection, session.user.id);
+
+      // Avoid HTTP conditional cache responses for role-sensitive routing.
+      res.set("Cache-Control", "no-store, max-age=0");
+      res.set("Pragma", "no-cache");
+      res.set("Expires", "0");
 
       res.json({
         id: session.user.id,
@@ -109,26 +115,31 @@ export async function registerRoutes(
         return res.status(400).json({ error: "Invalid role. Must be 'patient' or 'coordinator'" });
       }
 
-      // Fetch user from DB to check current role (session may have stale data)
       const db = await getMongoDb();
+      const userCollection = db.collection("user");
+      const dbUser = await findUserBySessionId(userCollection, session.user.id);
 
-      // Debug: log what we're looking for
-      console.log("[DEBUG] Session user ID:", session.user.id);
-
-      const dbUser = await db.collection("user").findOne({ id: session.user.id });
-      console.log("[DEBUG] Found user in DB:", dbUser ? "yes" : "no", dbUser);
+      if (!dbUser) {
+        return res.status(404).json({ error: "User not found" });
+      }
 
       if (dbUser?.role) {
-        return res.status(400).json({ error: "Role already set" });
+        if (dbUser.role === role) {
+          return res.json({ success: true, role, alreadySet: true });
+        }
+        return res.status(409).json({ error: `Role already set to '${dbUser.role}'` });
       }
 
       // Update role in database
-      const updateResult = await db.collection("user").updateOne(
-        { id: session.user.id },
+      const updateResult = await userCollection.updateOne(
+        { _id: dbUser._id },
         { $set: { role } }
       );
 
-      console.log("[DEBUG] Update result:", updateResult);
+      if (updateResult.matchedCount === 0) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
       console.log("User", session.user.id, "role set to:", role, "- matched:", updateResult.matchedCount, "modified:", updateResult.modifiedCount);
 
       res.json({ success: true, role });
@@ -517,4 +528,3 @@ export async function registerRoutes(
 
   return httpServer;
 }
-

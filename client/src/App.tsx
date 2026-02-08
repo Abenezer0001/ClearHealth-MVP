@@ -8,7 +8,9 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import { authClient } from "@/lib/auth-client";
-import { startRoleTour } from "@/lib/patient-tour";
+import { ensureRoleForSignedInUser } from "@/lib/auth-role-flow";
+import { clearPreAuthRole, getPreAuthRole, type PreAuthRole } from "@/lib/pre-auth-role";
+import { resumePendingRoleTour, startRoleTour } from "@/lib/patient-tour";
 import UserMenu from "@/components/user-menu";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2 } from "lucide-react";
@@ -28,14 +30,25 @@ function useUserRole(isAuthenticated: boolean) {
   return useQuery({
     queryKey: ["user-role"],
     queryFn: async () => {
-      const response = await fetch("/api/user/me", { credentials: "include" });
-      if (!response.ok) throw new Error("Failed to fetch user");
+      const response = await fetch("/api/user/me", {
+        credentials: "include",
+        cache: "no-store",
+      });
+      if (!response.ok) {
+        const error = new Error("Failed to fetch user role") as Error & { status?: number };
+        error.status = response.status;
+        throw error;
+      }
       const data = await response.json();
       return data.role as UserRole;
     },
     enabled: isAuthenticated,
     staleTime: 0, // Always refetch to get latest role
-    retry: false,
+    retry: (failureCount, error) => {
+      const status = (error as Error & { status?: number }).status;
+      return status === 401 && failureCount < 6;
+    },
+    retryDelay: (attempt) => Math.min(1000, 125 * 2 ** attempt),
   });
 }
 
@@ -70,12 +83,23 @@ function RoleGuard({
   return <>{children}</>;
 }
 
-function Router({ isAuthenticated, userRole }: { isAuthenticated: boolean; userRole: UserRole }) {
+function Router({
+  isAuthenticated,
+  userRole,
+  preAuthRole,
+}: {
+  isAuthenticated: boolean;
+  userRole: UserRole;
+  preAuthRole: PreAuthRole | null;
+}) {
   if (!isAuthenticated) {
     return (
       <Switch>
-        <Route path="/login" component={LoginPage} />
-        <Route component={LoginPage} />
+        <Route path="/role-selection" component={RoleSelectionPage} />
+        {preAuthRole ? <Route path="/login" component={LoginPage} /> : null}
+        <Route>
+          <Redirect to={preAuthRole ? "/login" : "/role-selection"} />
+        </Route>
       </Switch>
     );
   }
@@ -127,9 +151,18 @@ function Router({ isAuthenticated, userRole }: { isAuthenticated: boolean; userR
 function AppContent() {
   const { data: session, isPending: sessionPending } = authClient.useSession();
   const isAuthenticated = Boolean(session?.user);
+  const preAuthRole = getPreAuthRole();
+  const roleSyncInFlight = useRef(false);
+  const roleSyncAttempts = useRef(0);
+  const { toast } = useToast();
 
   // Fetch role from database (bypasses better-auth's cached session)
-  const { data: userRole, isLoading: roleLoading } = useUserRole(isAuthenticated);
+  const {
+    data: userRole,
+    isLoading: roleLoading,
+    isFetching: roleFetching,
+    error: roleError,
+  } = useUserRole(isAuthenticated);
   const hasTriedAutoTour = useRef(false);
 
   const style = {
@@ -138,15 +171,88 @@ function AppContent() {
   };
 
   // Don't show sidebar on role selection page
-  const [location] = useLocation();
+  const [location, setLocation] = useLocation();
   const showSidebar = isAuthenticated && userRole && location !== "/role-selection";
-  const isPending = sessionPending || (isAuthenticated && roleLoading);
+  const isPending = sessionPending || (isAuthenticated && (roleLoading || roleFetching));
 
   useEffect(() => {
     if (!isAuthenticated) {
       hasTriedAutoTour.current = false;
+      roleSyncAttempts.current = 0;
+      roleSyncInFlight.current = false;
     }
   }, [isAuthenticated]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !preAuthRole) return;
+    if (isPending) return;
+    if (roleSyncInFlight.current) return;
+
+    const syncRole = async () => {
+      if (roleSyncAttempts.current >= 3) return;
+      roleSyncAttempts.current += 1;
+      roleSyncInFlight.current = true;
+
+      try {
+        const result = await ensureRoleForSignedInUser(preAuthRole);
+        if (result.status === "mismatch") {
+          clearPreAuthRole();
+          authClient.signOut({
+            fetchOptions: {
+              onSuccess: () => {
+                toast({
+                  variant: "destructive",
+                  title: "Role mismatch",
+                  description: `This account is registered as ${result.role}. Select the matching role to continue.`,
+                });
+                setLocation("/role-selection");
+              },
+            },
+          });
+          return;
+        }
+
+        clearPreAuthRole();
+        roleSyncAttempts.current = 0;
+        queryClient.setQueryData(["user-role"], result.role);
+        await queryClient.invalidateQueries({ queryKey: ["user-role"] });
+      } catch (error) {
+        if (roleSyncAttempts.current >= 3) {
+          toast({
+            variant: "destructive",
+            title: "Role setup incomplete",
+            description: error instanceof Error ? error.message : "Failed to finish role setup.",
+          });
+        }
+      } finally {
+        roleSyncInFlight.current = false;
+      }
+    };
+
+    void syncRole();
+  }, [isAuthenticated, preAuthRole, isPending, setLocation, toast]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    if (roleLoading || roleFetching) return;
+
+    const status = (roleError as Error & { status?: number } | null)?.status;
+    if (status !== 401) return;
+
+    authClient.signOut({
+      fetchOptions: {
+        onSuccess: () => {
+          setLocation("/login");
+        },
+      },
+    });
+  }, [isAuthenticated, roleLoading, roleFetching, roleError, setLocation]);
+
+  useEffect(() => {
+    if (isPending) return;
+    if (!isAuthenticated || !userRole) return;
+    resumePendingRoleTour();
+  }, [isPending, isAuthenticated, userRole, location]);
 
   useEffect(() => {
     if (hasTriedAutoTour.current) return;
@@ -189,7 +295,7 @@ function AppContent() {
               </div>
             </header>
             <main className="flex-1 overflow-auto">
-              <Router isAuthenticated={isAuthenticated} userRole={userRole ?? null} />
+              <Router isAuthenticated={isAuthenticated} userRole={userRole ?? null} preAuthRole={preAuthRole} />
             </main>
           </div>
         </div>
@@ -197,7 +303,7 @@ function AppContent() {
     );
   }
 
-  return <Router isAuthenticated={isAuthenticated} userRole={userRole ?? null} />;
+  return <Router isAuthenticated={isAuthenticated} userRole={userRole ?? null} preAuthRole={preAuthRole} />;
 }
 
 // Main App component - provides context to children

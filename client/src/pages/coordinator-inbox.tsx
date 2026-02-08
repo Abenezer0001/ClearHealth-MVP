@@ -138,7 +138,7 @@ export default function CoordinatorInboxPage() {
     return (
         <div className="max-w-6xl mx-auto p-6 space-y-6">
             {/* Header */}
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between" data-testid="section-coordinator-header">
                 <div className="flex items-center gap-3">
                     <div className="flex h-10 w-10 items-center justify-center rounded-md bg-primary">
                         <Inbox className="h-5 w-5 text-primary-foreground" />
@@ -153,7 +153,7 @@ export default function CoordinatorInboxPage() {
             </div>
 
             {/* Stats Cards */}
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3" data-testid="grid-coordinator-stats">
                 {["all", "new", "contacted", "scheduled", "not_fit"].map((status) => (
                     <Card
                         key={status}
@@ -176,7 +176,7 @@ export default function CoordinatorInboxPage() {
             </div>
 
             {/* Leads Table */}
-            <Card className="surface-panel">
+            <Card className="surface-panel" data-testid="card-coordinator-leads">
                 <CardHeader>
                     <CardTitle className="text-lg">
                         {filterStatus === "all" ? "All Leads" : statusLabels[filterStatus]}

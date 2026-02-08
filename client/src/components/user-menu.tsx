@@ -11,6 +11,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { authClient } from "@/lib/auth-client";
+import { clearPreAuthRole } from "@/lib/pre-auth-role";
 import { restartCoordinatorTour, restartPatientTour } from "@/lib/patient-tour";
 import { useToast } from "@/hooks/use-toast";
 
@@ -64,6 +65,7 @@ export default function UserMenu() {
               authClient.signOut({
                 fetchOptions: {
                   onSuccess: () => {
+                    clearPreAuthRole();
                     toast({
                       title: "Signed out",
                     });

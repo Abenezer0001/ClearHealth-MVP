@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,15 +11,20 @@ import {
     Stethoscope,
     Loader2,
 } from "lucide-react";
+import { authClient } from "@/lib/auth-client";
+import { clearPreAuthRole, getPreAuthRole, setPreAuthRole, type PreAuthRole } from "@/lib/pre-auth-role";
 
 export default function RoleSelectionPage() {
     const [, setLocation] = useLocation();
     const { toast } = useToast();
     const queryClient = useQueryClient();
-    const [selectedRole, setSelectedRole] = useState<string | null>(null);
+    const { data: session } = authClient.useSession();
+    const isAuthenticated = Boolean(session?.user);
+    const [selectedRole, setSelectedRole] = useState<PreAuthRole | null>(getPreAuthRole());
+    const hasAutoSubmittedRef = useRef(false);
 
     const setRoleMutation = useMutation({
-        mutationFn: async (role: string) => {
+        mutationFn: async (role: PreAuthRole) => {
             const response = await fetch("/api/user/role", {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
@@ -37,6 +42,9 @@ export default function RoleSelectionPage() {
                 title: "Welcome!",
                 description: `You're all set as a ${role}.`,
             });
+            clearPreAuthRole();
+            // Update local role immediately so route guards can transition without waiting.
+            queryClient.setQueryData(["user-role"], role);
             // Invalidate the user-role query so it refetches the new role from the database
             await queryClient.invalidateQueries({ queryKey: ["user-role"] });
             // Navigate to home - the Router will now see the updated role
@@ -48,14 +56,35 @@ export default function RoleSelectionPage() {
                 description: error.message,
                 variant: "destructive",
             });
+            hasAutoSubmittedRef.current = false;
             setSelectedRole(null);
         },
     });
 
-    const handleRoleSelect = (role: string) => {
+    const handleRoleSelect = (role: PreAuthRole) => {
         setSelectedRole(role);
-        setRoleMutation.mutate(role);
+        if (isAuthenticated) {
+            setRoleMutation.mutate(role);
+            return;
+        }
+
+        setPreAuthRole(role);
+        toast({
+            title: "Role selected",
+            description: `Continue to login as a ${role}.`,
+        });
+        setLocation("/login");
     };
+
+    useEffect(() => {
+        if (!isAuthenticated) return;
+        if (!selectedRole) return;
+        if (setRoleMutation.isPending) return;
+        if (hasAutoSubmittedRef.current) return;
+
+        hasAutoSubmittedRef.current = true;
+        setRoleMutation.mutate(selectedRole);
+    }, [isAuthenticated, selectedRole, setRoleMutation]);
 
     return (
         <div className="min-h-screen flex items-center justify-center bg-background p-6">
@@ -113,10 +142,10 @@ export default function RoleSelectionPage() {
                                 {setRoleMutation.isPending && selectedRole === "patient" ? (
                                     <>
                                         <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                                        Setting up...
+                                        {isAuthenticated ? "Setting up..." : "Continuing..."}
                                     </>
                                 ) : (
-                                    "Continue as Patient"
+                                    isAuthenticated ? "Continue as Patient" : "Continue as Patient to Login"
                                 )}
                             </Button>
                         </CardContent>
@@ -160,10 +189,10 @@ export default function RoleSelectionPage() {
                                 {setRoleMutation.isPending && selectedRole === "coordinator" ? (
                                     <>
                                         <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                                        Setting up...
+                                        {isAuthenticated ? "Setting up..." : "Continuing..."}
                                     </>
                                 ) : (
-                                    "Continue as Coordinator"
+                                    isAuthenticated ? "Continue as Coordinator" : "Continue as Coordinator to Login"
                                 )}
                             </Button>
                         </CardContent>
