@@ -1,13 +1,16 @@
 FROM node:20-alpine
 
 # System dependencies + Doppler CLI + signal handling
-RUN apk add --no-cache tini wget curl bash ca-certificates && \
+RUN apk add --no-cache tini wget curl bash ca-certificates gnupg && \
     curl -Ls --tlsv1.2 --proto "=https" --retry 3 https://cli.doppler.com/install.sh | sh
 
 WORKDIR /app
 
 RUN addgroup -g 1001 -S nodejs && \
     adduser -S nodejs -u 1001
+
+# Keep npm version consistent with local + CI lockfile generation.
+RUN npm i -g npm@10.8.2
 
 # Workspace manifests first for better build cache reuse
 COPY package*.json ./

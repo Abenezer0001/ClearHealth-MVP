@@ -7,7 +7,7 @@
   "workspaces": [
     "apps/*"
   ],
-  "packageManager": "npm@11.6.2",
+  "packageManager": "npm@10.8.2",
   "scripts": {
     "dev": "doppler run --project ${DOPPLER_PROJECT:-trial-atlas} --config ${DOPPLER_CONFIG:-dev} -- turbo dev",
     "dev:local": "turbo dev",
@@ -92,6 +92,7 @@
     "react-icons": "^5.4.0",
     "react-resizable-panels": "^2.1.7",
     "recharts": "^2.15.2",
+    "shepherd.js": "^14.5.1",
     "tailwind-merge": "^2.6.0",
     "tailwindcss-animate": "^1.0.7",
     "tw-animate-css": "^1.2.5",
@@ -131,8 +132,5 @@
     "drizzle-kit": {
       "@esbuild-kit/esm-loader": "npm:tsx@^4.20.4"
     }
-  },
-  "optionalDependencies": {
-    "bufferutil": "^4.0.8"
   }
 }

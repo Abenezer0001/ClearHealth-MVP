@@ -46,7 +46,15 @@ export const auth = betterAuth({
         required: false,
         defaultValue: null,
         input: false, // prevent user setting via signup
+        returned: true, // Include this field in the session response
       },
+    },
+  },
+  // Custom session callback to ensure the role field is included in session
+  session: {
+    cookieCache: {
+      enabled: true,
+      maxAge: 60 * 5, // 5 minutes cache
     },
   },
   secret: process.env.BETTER_AUTH_SECRET ?? "clearhealth-mvp-dev-secret-change-me",

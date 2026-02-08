@@ -8,10 +8,11 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import { authClient } from "@/lib/auth-client";
+import { startPatientTour } from "@/lib/patient-tour";
 import UserMenu from "@/components/user-menu";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2 } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import NotFound from "@/pages/not-found";
 import TrialsPage from "@/pages/trials";
 import AdminPage from "@/pages/admin";
@@ -110,6 +111,7 @@ function App() {
   const { data: session, isPending } = authClient.useSession();
   const isAuthenticated = Boolean(session?.user);
   const userRole = ((session?.user as any)?.role as UserRole) ?? null;
+  const hasTriedAutoTour = useRef(false);
 
   const style = {
     "--sidebar-width": "16rem",
@@ -119,6 +121,22 @@ function App() {
   // Don't show sidebar on role selection page
   const [location] = useLocation();
   const showSidebar = isAuthenticated && userRole && location !== "/role-selection";
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      hasTriedAutoTour.current = false;
+    }
+  }, [isAuthenticated]);
+
+  useEffect(() => {
+    if (hasTriedAutoTour.current) return;
+    if (isPending) return;
+    if (!isAuthenticated || userRole !== "patient") return;
+    if (location !== "/") return;
+
+    hasTriedAutoTour.current = true;
+    startPatientTour();
+  }, [isPending, isAuthenticated, userRole, location]);
 
   return (
     <ThemeProvider defaultTheme="dark" storageKey="trialatlas-theme">

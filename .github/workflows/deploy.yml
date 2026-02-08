@@ -45,8 +45,7 @@ jobs:
 
             export DOPPLER_TOKEN="${{ secrets.DOPPLER_TOKEN }}"
             export DOPPLER_PROJECT="${{ secrets.DOPPLER_PROJECT }}"
-            # Deployment is always production config for linux.achievengine.com
-            export DOPPLER_CONFIG="prd"
+            export DOPPLER_CONFIG="${{ secrets.DOPPLER_CONFIG }}"
             export SUDO_PASSWORD="${{ secrets.SUDO_PASSWORD }}"
             export PUBLIC_HEALTH_URL="${{ secrets.HEALTH_URL }}"
             export SERVER_DOMAIN="${{ secrets.SERVER_DOMAIN }}"
@@ -58,6 +57,9 @@ jobs:
 
             if [ -z "${DOPPLER_PROJECT}" ]; then
               export DOPPLER_PROJECT="trial-atlas"
+            fi
+            if [ -z "${DOPPLER_CONFIG}" ]; then
+              export DOPPLER_CONFIG="prd"
             fi
             doppler setup --project "${DOPPLER_PROJECT}" --config "${DOPPLER_CONFIG}" --no-interactive || echo "Doppler setup warning"
 

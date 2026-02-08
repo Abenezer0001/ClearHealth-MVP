@@ -11,6 +11,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { authClient } from "@/lib/auth-client";
+import { restartPatientTour } from "@/lib/patient-tour";
 import { useToast } from "@/hooks/use-toast";
 
 export default function UserMenu() {
@@ -30,6 +31,9 @@ export default function UserMenu() {
     );
   }
 
+  const userRole = (session.user as any)?.role as string | undefined;
+  const isPatient = userRole === "patient";
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -42,6 +46,15 @@ export default function UserMenu() {
           <DropdownMenuLabel>My Account</DropdownMenuLabel>
           <DropdownMenuSeparator />
           <DropdownMenuItem>{session.user.email}</DropdownMenuItem>
+          {isPatient && (
+            <DropdownMenuItem
+              onClick={() => {
+                restartPatientTour();
+              }}
+            >
+              Take Product Tour
+            </DropdownMenuItem>
+          )}
           <DropdownMenuItem
             onClick={() => {
               authClient.signOut({

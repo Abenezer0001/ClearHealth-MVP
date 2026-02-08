@@ -2,7 +2,7 @@
 
 ## 1) Doppler project/configs
 
-Use Doppler project `trial-atlas` with one deploy config (recommended: `prd`).
+Use Doppler project `trial-atlas` with one deploy workflow and one deploy config (recommended: `prd`).
 
 At minimum, set secrets from `.env.example`:
 
@@ -30,7 +30,7 @@ Required:
 Optional:
 
 - `DOPPLER_PROJECT` (default: `trial-atlas`)
-- `DOPPLER_CONFIG` (ignored by deploy workflow; deploy is fixed to `prd`)
+- `DOPPLER_CONFIG` (default: `prd`; set to your only config if different)
 - `HEALTH_URL` (example: `https://linux.achievengine.com/api/health`)
 - `SUDO_PASSWORD` (only if your SSH user requires sudo password for Caddyfile update)
 - `SERVER_DOMAIN` (default: `linux.achievengine.com`)
@@ -43,6 +43,8 @@ Optional:
 
 - `main` -> `.github/workflows/deploy.yml` + `.github/workflows/ci.yml`
 - PRs -> `.github/workflows/ci.yml`
+
+CI uses `npm@10.8.2` and Docker build also pins `npm@10.8.2` to avoid lockfile mismatch issues.
 
 ## 4) Server prerequisites
 
