@@ -84,14 +84,14 @@ fetch_doppler_env() {
       --config "${DOPPLER_CONFIG}" \
       --token "${DOPPLER_TOKEN}" \
       --no-file \
-      --format env > "${RUNTIME_ENV_FILE}"
+      --format docker > "${RUNTIME_ENV_FILE}"
   else
     echo "Fetching Doppler secrets via host Doppler auth (${DOPPLER_PROJECT}/${DOPPLER_CONFIG})..."
     doppler secrets download \
       --project "${DOPPLER_PROJECT}" \
       --config "${DOPPLER_CONFIG}" \
       --no-file \
-      --format env > "${RUNTIME_ENV_FILE}"
+      --format docker > "${RUNTIME_ENV_FILE}"
   fi
 
   chmod 600 "${RUNTIME_ENV_FILE}"
