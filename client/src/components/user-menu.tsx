@@ -11,7 +11,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { authClient } from "@/lib/auth-client";
-import { restartPatientTour } from "@/lib/patient-tour";
+import { restartCoordinatorTour, restartPatientTour } from "@/lib/patient-tour";
 import { useToast } from "@/hooks/use-toast";
 
 export default function UserMenu() {
@@ -32,12 +32,12 @@ export default function UserMenu() {
   }
 
   const userRole = (session.user as any)?.role as string | undefined;
-  const isPatient = userRole === "patient";
+  const canTakeTour = userRole === "patient" || userRole === "coordinator";
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="outline" size="sm">
+        <Button variant="outline" size="sm" data-testid="button-user-menu">
           {session.user.name}
         </Button>
       </DropdownMenuTrigger>
@@ -46,9 +46,13 @@ export default function UserMenu() {
           <DropdownMenuLabel>My Account</DropdownMenuLabel>
           <DropdownMenuSeparator />
           <DropdownMenuItem>{session.user.email}</DropdownMenuItem>
-          {isPatient && (
+          {canTakeTour && (
             <DropdownMenuItem
               onClick={() => {
+                if (userRole === "coordinator") {
+                  restartCoordinatorTour();
+                  return;
+                }
                 restartPatientTour();
               }}
             >

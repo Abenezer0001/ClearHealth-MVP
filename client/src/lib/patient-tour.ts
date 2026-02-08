@@ -1,8 +1,10 @@
 import Shepherd from "shepherd.js";
 
 const PATIENT_TOUR_COMPLETED_KEY = "trialatlas-patient-tour-v1-completed";
+const COORDINATOR_TOUR_COMPLETED_KEY = "trialatlas-coordinator-tour-v1-completed";
 
 let activeTour: any = null;
+type TourRole = "patient" | "coordinator";
 
 function isBrowser(): boolean {
   return typeof window !== "undefined";
@@ -18,9 +20,24 @@ export function isPatientTourCompleted(): boolean {
   return Boolean(window.localStorage.getItem(PATIENT_TOUR_COMPLETED_KEY));
 }
 
+function isCoordinatorTourCompleted(): boolean {
+  if (!isBrowser()) return true;
+  return Boolean(window.localStorage.getItem(COORDINATOR_TOUR_COMPLETED_KEY));
+}
+
 function clearPatientTourCompleted(): void {
   if (!isBrowser()) return;
   window.localStorage.removeItem(PATIENT_TOUR_COMPLETED_KEY);
+}
+
+function markCoordinatorTourCompleted(): void {
+  if (!isBrowser()) return;
+  window.localStorage.setItem(COORDINATOR_TOUR_COMPLETED_KEY, new Date().toISOString());
+}
+
+function clearCoordinatorTourCompleted(): void {
+  if (!isBrowser()) return;
+  window.localStorage.removeItem(COORDINATOR_TOUR_COMPLETED_KEY);
 }
 
 function createPatientTour() {
@@ -120,10 +137,115 @@ function createPatientTour() {
   return tour;
 }
 
-export function startPatientTour(options?: { force?: boolean }): void {
+function createCoordinatorTour() {
+  const tour = new Shepherd.Tour({
+    useModalOverlay: true,
+    defaultStepOptions: {
+      cancelIcon: {
+        enabled: true,
+      },
+      classes: "shepherd-theme-default",
+      scrollTo: { behavior: "smooth", block: "center" },
+    },
+  });
+
+  const skipButton = {
+    text: "Skip Tour",
+    action: () => tour.cancel(),
+  };
+
+  const backButton = {
+    text: "Back",
+    action: () => tour.back(),
+  };
+
+  const nextButton = {
+    text: "Next",
+    action: () => tour.next(),
+  };
+
+  tour.addStep({
+    id: "coordinator-tour-welcome",
+    title: "Welcome, Trial Coordinator",
+    text: "This walkthrough highlights where to manage leads and monitor your workflow.",
+    buttons: [skipButton, nextButton],
+  });
+
+  tour.addStep({
+    id: "coordinator-tour-inbox",
+    title: "Coordinator Inbox",
+    text: "Open your inbox to review patient leads and update status.",
+    attachTo: {
+      element: '[data-testid="link-nav-coordinator-inbox"]',
+      on: "right",
+    },
+    buttons: [backButton, nextButton],
+  });
+
+  tour.addStep({
+    id: "coordinator-tour-admin",
+    title: "Admin Dashboard",
+    text: "Use Admin for high-level trial and recruitment insights.",
+    attachTo: {
+      element: '[data-testid="link-nav-admin"]',
+      on: "right",
+    },
+    buttons: [backButton, nextButton],
+  });
+
+  tour.addStep({
+    id: "coordinator-tour-search",
+    title: "Find Trials",
+    text: "You can also search and review trial details from this section.",
+    attachTo: {
+      element: '[data-testid="link-nav-find-trials"]',
+      on: "right",
+    },
+    buttons: [backButton, nextButton],
+  });
+
+  tour.addStep({
+    id: "coordinator-tour-account",
+    title: "Account Menu",
+    text: "Use this menu to replay the tour later or sign out securely.",
+    attachTo: {
+      element: '[data-testid="button-user-menu"]',
+      on: "bottom",
+    },
+    buttons: [
+      backButton,
+      {
+        text: "Finish",
+        action: () => tour.complete(),
+      },
+    ],
+  });
+
+  tour.on("complete", () => {
+    markCoordinatorTourCompleted();
+    activeTour = null;
+  });
+
+  tour.on("cancel", () => {
+    markCoordinatorTourCompleted();
+    activeTour = null;
+  });
+
+  return tour;
+}
+
+function isTourCompleted(role: TourRole): boolean {
+  return role === "patient" ? isPatientTourCompleted() : isCoordinatorTourCompleted();
+}
+
+function createTourForRole(role: TourRole) {
+  return role === "patient" ? createPatientTour() : createCoordinatorTour();
+}
+
+export function startRoleTour(role: TourRole, options?: { force?: boolean }): void {
   if (!isBrowser()) return;
 
-  if (!options?.force && isPatientTourCompleted()) {
+  if (!options?.force && isTourCompleted(role)) {
     return;
   }
 
@@ -132,14 +254,27 @@ export function startPatientTour(options?: { force?: boolean }): void {
     activeTour = null;
   }
 
-  activeTour = createPatientTour();
+  activeTour = createTourForRole(role);
 
   window.setTimeout(() => {
     activeTour?.start();
   }, 180);
 }
 
+export function startPatientTour(options?: { force?: boolean }): void {
+  startRoleTour("patient", options);
+}
+
+export function startCoordinatorTour(options?: { force?: boolean }): void {
+  startRoleTour("coordinator", options);
+}
+
 export function restartPatientTour(): void {
   clearPatientTourCompleted();
-  startPatientTour({ force: true });
+  startRoleTour("patient", { force: true });
+}
+
+export function restartCoordinatorTour(): void {
+  clearCoordinatorTourCompleted();
+  startRoleTour("coordinator", { force: true });
 }

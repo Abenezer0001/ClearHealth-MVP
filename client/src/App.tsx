@@ -8,7 +8,7 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import { authClient } from "@/lib/auth-client";
-import { startPatientTour } from "@/lib/patient-tour";
+import { startRoleTour } from "@/lib/patient-tour";
 import UserMenu from "@/components/user-menu";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2 } from "lucide-react";
@@ -131,15 +131,15 @@ function App() {
   useEffect(() => {
     if (hasTriedAutoTour.current) return;
     if (isPending) return;
-    if (!isAuthenticated || userRole !== "patient") return;
+    if (!isAuthenticated || !userRole) return;
     if (location !== "/") return;
 
     hasTriedAutoTour.current = true;
-    startPatientTour();
+    startRoleTour(userRole);
   }, [isPending, isAuthenticated, userRole, location]);
 
   return (
-    <ThemeProvider defaultTheme="dark" storageKey="trialatlas-theme">
+    <ThemeProvider defaultTheme="light" storageKey="trialatlas-theme">
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>
           {isPending ? (

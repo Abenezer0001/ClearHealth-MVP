@@ -32,8 +32,10 @@ export default defineConfig({
     emptyOutDir: true,
   },
   server: {
-    port: 3001,
-    strictPort: true,
+    // Default to 3001, but allow automatic fallback (3002, 3003, ...)
+    // so `npm run dev` does not fail if the port is already in use.
+    port: Number(process.env.WEB_PORT ?? 3001),
+    strictPort: false,
     allowedHosts: ["752d-196-190-62-113.ngrok-free.app"],
     proxy: {
       "/api": {

@@ -9,6 +9,8 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      HEALTH_URL: ${{ secrets.HEALTH_URL }}
 
     steps:
       - name: Checkout code
@@ -69,7 +71,7 @@ jobs:
           SSHEOF
 
       - name: Verify deployment
-        if: ${{ secrets.HEALTH_URL != '' }}
+        if: ${{ env.HEALTH_URL != '' }}
         run: |
           echo "Waiting for endpoint..."
           sleep 25
@@ -78,7 +80,7 @@ jobs:
           attempt=1
           while [ "$attempt" -le "$max_attempts" ]; do
             echo "Verification attempt $attempt/$max_attempts"
-            if curl -fsS "${{ secrets.HEALTH_URL }}"; then
+            if curl -fsS "${HEALTH_URL}"; then
               echo "✅ Deployment successful"
               exit 0
             fi

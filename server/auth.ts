@@ -22,11 +22,19 @@ void authMongoClient.connect().catch((error) => {
 });
 const authDatabase = authMongoClient.db();
 
+const localDevOrigins = [
+  "http://localhost:3001",
+  "http://127.0.0.1:3001",
+  "http://localhost:3002",
+  "http://127.0.0.1:3002",
+  "http://localhost:3003",
+  "http://127.0.0.1:3003",
+];
+
 const trustedOrigins = Array.from(
   new Set([
     process.env.CORS_ORIGIN,
-    "http://localhost:3001",
-    "http://127.0.0.1:3001",
+    ...localDevOrigins,
     "http://localhost:5000",
     "http://127.0.0.1:5000",
   ].filter(Boolean) as string[]),
@@ -72,4 +80,3 @@ export const auth = betterAuth({
       },
   },
 });
-
