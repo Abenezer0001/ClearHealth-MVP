@@ -14,6 +14,7 @@ import {
   getStoredToken,
   clearStoredToken,
 } from "./smart-fhir";
+import { getMongoDb, getNextSequence } from "./mongo";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -299,28 +300,8 @@ export async function registerRoutes(
   });
 
   // =========================================================================
-  // Patient Share & Coordinator Inbox API Routes (MVP - in-memory storage)
+  // Patient Share & Coordinator Inbox API Routes (MongoDB Storage)
   // =========================================================================
-
-  // In-memory storage for MVP (replace with DB in production)
-  const patientLeads: Array<{
-    id: number;
-    patientUserId: string;
-    ageRange: string;
-    sex: string;
-    diagnosisSummary: string;
-    trialNctId: string;
-    trialTitle: string;
-    sharedFields: { labs: boolean; meds: boolean; location: boolean; email: boolean };
-    relevantLabs?: string;
-    activeMeds?: string;
-    locationCity?: string;
-    contactEmail?: string;
-    status: string;
-    coordinatorNotes?: string;
-    createdAt: Date;
-  }> = [];
-  let leadIdCounter = 1;
 
   // Patient: Submit interest in a trial
   app.post("/api/patient/share-profile", requireAuth, async (req, res) => {
@@ -346,8 +327,11 @@ export async function registerRoutes(
         return res.status(400).json({ error: "Trial and diagnosis info required" });
       }
 
+      const db = await getMongoDb();
+      const leadId = await getNextSequence("patientLeads");
+
       const lead = {
-        id: leadIdCounter++,
+        id: leadId,
         patientUserId: session?.user?.id || "unknown",
         ageRange: ageRange || "Unknown",
         sex: sex || "Unknown",
@@ -363,7 +347,7 @@ export async function registerRoutes(
         createdAt: new Date(),
       };
 
-      patientLeads.push(lead);
+      await db.collection("patientLeads").insertOne(lead);
       console.log("New patient lead created:", lead.id, "for trial:", trialNctId);
 
       res.json({ success: true, leadId: lead.id });
@@ -376,11 +360,15 @@ export async function registerRoutes(
   // Coordinator: Get all leads
   app.get("/api/coordinator/leads", requireAuth, async (req, res) => {
     try {
+      const db = await getMongoDb();
       // Sort by newest first
-      const sortedLeads = [...patientLeads].sort(
-        (a, b) => b.createdAt.getTime() - a.createdAt.getTime()
-      );
-      res.json({ leads: sortedLeads });
+      const leads = await db
+        .collection("patientLeads")
+        .find({})
+        .sort({ createdAt: -1 })
+        .toArray();
+
+      res.json({ leads });
     } catch (error) {
       console.error("Get leads error:", error);
       res.status(500).json({ error: "Failed to fetch leads" });
@@ -393,20 +381,28 @@ export async function registerRoutes(
       const leadId = parseInt(req.params.id);
       const { status, coordinatorNotes } = req.body;
 
-      const lead = patientLeads.find((l) => l.id === leadId);
-      if (!lead) {
+      const db = await getMongoDb();
+      const updateFields: Record<string, any> = {};
+
+      if (status) {
+        updateFields.status = status;
+      }
+      if (coordinatorNotes !== undefined) {
+        updateFields.coordinatorNotes = coordinatorNotes;
+      }
+
+      const result = await db.collection("patientLeads").findOneAndUpdate(
+        { id: leadId },
+        { $set: updateFields },
+        { returnDocument: "after" }
+      );
+
+      if (!result) {
         return res.status(404).json({ error: "Lead not found" });
       }
 
-      if (status) {
-        lead.status = status;
-      }
-      if (coordinatorNotes !== undefined) {
-        lead.coordinatorNotes = coordinatorNotes;
-      }
-
       console.log("Lead", leadId, "status updated to:", status);
-      res.json({ success: true, lead });
+      res.json({ success: true, lead: result });
     } catch (error) {
       console.error("Update lead error:", error);
       res.status(500).json({ error: "Failed to update lead" });
