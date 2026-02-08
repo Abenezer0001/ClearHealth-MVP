@@ -45,6 +45,7 @@ Optional:
 - PRs -> `.github/workflows/ci.yml`
 
 CI uses `npm@10.8.2` and Docker build also pins `npm@10.8.2` to avoid lockfile mismatch issues.
+Deployment now downloads Doppler secrets on the host first and injects them into the container via a temporary env file, so the app no longer requires `DOPPLER_TOKEN` inside the container process.
 
 ## 4) Server prerequisites
 

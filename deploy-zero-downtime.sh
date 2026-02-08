@@ -18,6 +18,7 @@ NETWORK_NAME="${NETWORK_NAME:-${DEPLOY_STACK_NAME}_backend-network}"
 REDIS_VOLUME_NAME="${REDIS_VOLUME_NAME:-${DEPLOY_STACK_NAME}_redis_data}"
 DOPPLER_PROJECT="${DOPPLER_PROJECT:-trial-atlas}"
 DOPPLER_CONFIG="${DOPPLER_CONFIG:-prd}"
+RUNTIME_ENV_FILE="${RUNTIME_ENV_FILE:-.deploy_runtime.env}"
 
 run_sudo() {
   if [ -n "${SUDO_PASSWORD:-}" ]; then
@@ -70,6 +71,34 @@ APP_SERVICE_NAME="${SERVICE_NAME}_${NEW_PORT}"
 echo "Current port: ${CURRENT_PORT}"
 echo "Deploying new revision on: ${NEW_PORT}"
 
+fetch_doppler_env() {
+  if ! command -v doppler >/dev/null 2>&1; then
+    echo "ERROR: Doppler CLI is required on host to fetch runtime secrets."
+    exit 1
+  fi
+
+  if [ -n "${DOPPLER_TOKEN:-}" ]; then
+    echo "Fetching Doppler secrets with service token (${DOPPLER_PROJECT}/${DOPPLER_CONFIG})..."
+    doppler secrets download \
+      --project "${DOPPLER_PROJECT}" \
+      --config "${DOPPLER_CONFIG}" \
+      --token "${DOPPLER_TOKEN}" \
+      --no-file \
+      --format env > "${RUNTIME_ENV_FILE}"
+  else
+    echo "Fetching Doppler secrets via host Doppler auth (${DOPPLER_PROJECT}/${DOPPLER_CONFIG})..."
+    doppler secrets download \
+      --project "${DOPPLER_PROJECT}" \
+      --config "${DOPPLER_CONFIG}" \
+      --no-file \
+      --format env > "${RUNTIME_ENV_FILE}"
+  fi
+
+  chmod 600 "${RUNTIME_ENV_FILE}"
+}
+
+fetch_doppler_env
+
 cat > docker-compose.deploy.yml <<EOF
 services:
   ${APP_SERVICE_NAME}:
@@ -77,13 +106,13 @@ services:
       context: .
       dockerfile: ${DOCKERFILE}
     restart: always
+    env_file:
+      - ${RUNTIME_ENV_FILE}
     environment:
-      - NODE_ENV=production
-      - REDIS_URL=redis://redis:6379
-      - DOPPLER_TOKEN=\${DOPPLER_TOKEN:-}
-      - DOPPLER_PROJECT=${DOPPLER_PROJECT}
-      - DOPPLER_CONFIG=${DOPPLER_CONFIG}
-    command: ["/sbin/tini", "--", "sh", "-c", "export PORT=${NEW_PORT} && doppler run --project ${DOPPLER_PROJECT} --config ${DOPPLER_CONFIG} --preserve-env=PORT,NODE_ENV -- npm run start"]
+      NODE_ENV: production
+      REDIS_URL: redis://redis:6379
+      PORT: "${NEW_PORT}"
+    command: ["sh", "-c", "npm run start"]
     ports:
       - "127.0.0.1:${NEW_PORT}:${NEW_PORT}"
     healthcheck:
@@ -131,7 +160,7 @@ until curl -fsS "${HEALTH_CHECK_URL}:${NEW_PORT}${HEALTH_CHECK_PATH}" >/dev/null
     docker compose -f docker-compose.deploy.yml logs --tail 150 "${APP_SERVICE_NAME}" || true
     docker compose -f docker-compose.deploy.yml stop "${APP_SERVICE_NAME}" || true
     docker compose -f docker-compose.deploy.yml rm -f "${APP_SERVICE_NAME}" || true
-    rm -f docker-compose.deploy.yml
+    rm -f docker-compose.deploy.yml "${RUNTIME_ENV_FILE}"
     exit 1
   fi
   echo "Health check attempt ${attempt}/${MAX_ATTEMPTS} failed; retrying in ${SLEEP_TIME}s..."
@@ -175,7 +204,7 @@ else
   echo "ERROR: Failed to reload Caddy; cleaning up new container."
   docker compose -f docker-compose.deploy.yml stop "${APP_SERVICE_NAME}" || true
   docker compose -f docker-compose.deploy.yml rm -f "${APP_SERVICE_NAME}" || true
-  rm -f docker-compose.deploy.yml "$RUNTIME_DIR/caddy.json" "$TEMP_CADDYFILE"
+  rm -f docker-compose.deploy.yml "$RUNTIME_DIR/caddy.json" "$TEMP_CADDYFILE" "${RUNTIME_ENV_FILE}"
   exit 1
 fi
 
@@ -196,6 +225,6 @@ if [ -n "$OLD_CONTAINERS" ]; then
   done
 fi
 
-rm -f docker-compose.deploy.yml "$RUNTIME_DIR/caddy.json" "$TEMP_CADDYFILE" 2>/dev/null || true
+rm -f docker-compose.deploy.yml "$RUNTIME_DIR/caddy.json" "$TEMP_CADDYFILE" "${RUNTIME_ENV_FILE}" 2>/dev/null || true
 
 echo "✅ Deployment complete. Active port is now ${NEW_PORT}."

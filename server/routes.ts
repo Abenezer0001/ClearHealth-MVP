@@ -66,6 +66,33 @@ export async function registerRoutes(
   // User Role Management
   // =========================================================================
 
+  // Get current user with role from database (bypasses session cache)
+  app.get("/api/user/me", requireAuth, async (req, res) => {
+    try {
+      const session = await auth.api.getSession({
+        headers: fromNodeHeaders(req.headers),
+      });
+
+      if (!session?.user) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      // Fetch user directly from database to get current role
+      const db = await getMongoDb();
+      const dbUser = await db.collection("user").findOne({ id: session.user.id });
+
+      res.json({
+        id: session.user.id,
+        name: session.user.name,
+        email: session.user.email,
+        role: dbUser?.role || null,
+      });
+    } catch (error) {
+      console.error("Get user error:", error);
+      res.status(500).json({ error: "Failed to get user" });
+    }
+  });
+
   // Set user role (only if not already set)
   app.patch("/api/user/role", requireAuth, async (req, res) => {
     try {
@@ -82,20 +109,28 @@ export async function registerRoutes(
         return res.status(400).json({ error: "Invalid role. Must be 'patient' or 'coordinator'" });
       }
 
-      // Check if user already has a role
-      const currentRole = (session.user as any).role;
-      if (currentRole) {
+      // Fetch user from DB to check current role (session may have stale data)
+      const db = await getMongoDb();
+
+      // Debug: log what we're looking for
+      console.log("[DEBUG] Session user ID:", session.user.id);
+
+      const dbUser = await db.collection("user").findOne({ id: session.user.id });
+      console.log("[DEBUG] Found user in DB:", dbUser ? "yes" : "no", dbUser);
+
+      if (dbUser?.role) {
         return res.status(400).json({ error: "Role already set" });
       }
 
       // Update role in database
-      const db = await getMongoDb();
-      await db.collection("user").updateOne(
+      const updateResult = await db.collection("user").updateOne(
         { id: session.user.id },
         { $set: { role } }
       );
 
-      console.log("User", session.user.id, "role set to:", role);
+      console.log("[DEBUG] Update result:", updateResult);
+      console.log("User", session.user.id, "role set to:", role, "- matched:", updateResult.matchedCount, "modified:", updateResult.modifiedCount);
+
       res.json({ success: true, role });
     } catch (error) {
       console.error("Role update error:", error);

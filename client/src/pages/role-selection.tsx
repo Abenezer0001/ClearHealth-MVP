@@ -37,9 +37,10 @@ export default function RoleSelectionPage() {
                 title: "Welcome!",
                 description: `You're all set as a ${role}.`,
             });
-            // Force a full page reload to refresh the session from the server
-            // This is needed because better-auth caches the session
-            window.location.href = "/";
+            // Invalidate the user-role query so it refetches the new role from the database
+            await queryClient.invalidateQueries({ queryKey: ["user-role"] });
+            // Navigate to home - the Router will now see the updated role
+            setLocation("/");
         },
         onError: (error: Error) => {
             toast({
@@ -47,6 +48,7 @@ export default function RoleSelectionPage() {
                 description: error.message,
                 variant: "destructive",
             });
+            setSelectedRole(null);
         },
     });
 
