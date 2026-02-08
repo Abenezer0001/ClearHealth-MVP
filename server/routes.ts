@@ -37,6 +37,72 @@ export async function registerRoutes(
     }
   };
 
+  // Role-based access middleware
+  const requireRole = (...allowedRoles: string[]) => {
+    return async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const session = await auth.api.getSession({
+          headers: fromNodeHeaders(req.headers),
+        });
+
+        if (!session?.user) {
+          return res.status(401).json({ error: "Unauthorized" });
+        }
+
+        const userRole = (session.user as any).role;
+        if (!userRole || !allowedRoles.includes(userRole)) {
+          return res.status(403).json({ error: "Forbidden: insufficient permissions" });
+        }
+
+        return next();
+      } catch (error) {
+        console.error("Role middleware error:", error);
+        return res.status(403).json({ error: "Forbidden" });
+      }
+    };
+  };
+
+  // =========================================================================
+  // User Role Management
+  // =========================================================================
+
+  // Set user role (only if not already set)
+  app.patch("/api/user/role", requireAuth, async (req, res) => {
+    try {
+      const session = await auth.api.getSession({
+        headers: fromNodeHeaders(req.headers),
+      });
+
+      if (!session?.user) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      const { role } = req.body;
+      if (!role || !["patient", "coordinator"].includes(role)) {
+        return res.status(400).json({ error: "Invalid role. Must be 'patient' or 'coordinator'" });
+      }
+
+      // Check if user already has a role
+      const currentRole = (session.user as any).role;
+      if (currentRole) {
+        return res.status(400).json({ error: "Role already set" });
+      }
+
+      // Update role in database
+      const db = await getMongoDb();
+      await db.collection("user").updateOne(
+        { id: session.user.id },
+        { $set: { role } }
+      );
+
+      console.log("User", session.user.id, "role set to:", role);
+      res.json({ success: true, role });
+    } catch (error) {
+      console.error("Role update error:", error);
+      res.status(500).json({ error: "Failed to update role" });
+    }
+  });
+
   // =========================================================================
   // Clinical Trials API Routes
   // =========================================================================
@@ -303,8 +369,8 @@ export async function registerRoutes(
   // Patient Share & Coordinator Inbox API Routes (MongoDB Storage)
   // =========================================================================
 
-  // Patient: Submit interest in a trial
-  app.post("/api/patient/share-profile", requireAuth, async (req, res) => {
+  // Patient: Submit interest in a trial (patient role only)
+  app.post("/api/patient/share-profile", requireAuth, requireRole("patient"), async (req, res) => {
     try {
       const session = await auth.api.getSession({
         headers: fromNodeHeaders(req.headers),
@@ -357,8 +423,8 @@ export async function registerRoutes(
     }
   });
 
-  // Coordinator: Get all leads
-  app.get("/api/coordinator/leads", requireAuth, async (req, res) => {
+  // Coordinator: Get all leads (coordinator role only)
+  app.get("/api/coordinator/leads", requireAuth, requireRole("coordinator"), async (req, res) => {
     try {
       const db = await getMongoDb();
       // Sort by newest first
@@ -375,8 +441,8 @@ export async function registerRoutes(
     }
   });
 
-  // Coordinator: Update lead status
-  app.patch("/api/coordinator/leads/:id/status", requireAuth, async (req, res) => {
+  // Coordinator: Update lead status (coordinator role only)
+  app.patch("/api/coordinator/leads/:id/status", requireAuth, requireRole("coordinator"), async (req, res) => {
     try {
       const leadId = parseInt(req.params.id);
       const { status, coordinatorNotes } = req.body;

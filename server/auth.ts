@@ -34,22 +34,34 @@ const trustedOrigins = Array.from(
 
 export const auth = betterAuth({
   database: mongodbAdapter(authDatabase),
+  baseURL: process.env.BETTER_AUTH_BASE_URL,
   trustedOrigins,
   emailAndPassword: {
     enabled: true,
+  },
+  user: {
+    additionalFields: {
+      role: {
+        type: "string",
+        required: false,
+        defaultValue: null,
+        input: false, // prevent user setting via signup
+      },
+    },
   },
   secret: process.env.BETTER_AUTH_SECRET ?? "clearhealth-mvp-dev-secret-change-me",
   advanced: {
     defaultCookieAttributes: isProduction
       ? {
-          sameSite: "none",
-          secure: true,
-          httpOnly: true,
-        }
+        sameSite: "none",
+        secure: true,
+        httpOnly: true,
+      }
       : {
-          sameSite: "lax",
-          secure: false,
-          httpOnly: true,
-        },
+        sameSite: "lax",
+        secure: false,
+        httpOnly: true,
+      },
   },
 });
+

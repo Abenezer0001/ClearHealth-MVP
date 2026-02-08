@@ -19,35 +19,50 @@ import {
   SidebarFooter,
 } from "@/components/ui/sidebar";
 
+type UserRole = "patient" | "coordinator";
+
 const coreNavItems = [
   {
     title: "Find Trials",
     url: "/",
     icon: Stethoscope,
     description: "Search clinical trials",
+    allowedRoles: ["patient", "coordinator"] as UserRole[],
   },
   {
     title: "Connect Health Record",
     url: "/connect-ehr",
     icon: Heart,
     description: "Import your EHR data",
+    allowedRoles: ["patient"] as UserRole[],
   },
   {
     title: "Coordinator Inbox",
     url: "/coordinator-inbox",
     icon: Inbox,
     description: "View patient leads",
+    allowedRoles: ["coordinator"] as UserRole[],
   },
   {
     title: "Admin",
     url: "/admin",
     icon: BarChart3,
     description: "Dashboard & insights",
+    allowedRoles: ["coordinator"] as UserRole[],
   },
 ];
 
-export function AppSidebar() {
+interface AppSidebarProps {
+  userRole: UserRole;
+}
+
+export function AppSidebar({ userRole }: AppSidebarProps) {
   const [location] = useLocation();
+
+  // Filter nav items by user role
+  const visibleNavItems = coreNavItems.filter((item) =>
+    item.allowedRoles.includes(userRole)
+  );
 
   return (
     <Sidebar>
@@ -67,7 +82,7 @@ export function AppSidebar() {
           <SidebarGroupLabel>Navigation</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {coreNavItems.map((item) => (
+              {visibleNavItems.map((item) => (
                 <SidebarMenuItem key={item.title}>
                   <SidebarMenuButton
                     asChild

@@ -2,10 +2,7 @@
 
 ## 1) Doppler project/configs
 
-Create these Doppler configs in project `clearhealth-mvp`:
-
-- `stg`
-- `prd`
+Use Doppler project `trial-atlas` with one deploy config (recommended: `prd`).
 
 At minimum, set secrets from `.env.example`:
 
@@ -24,31 +21,28 @@ At minimum, set secrets from `.env.example`:
 
 Required:
 
-- `SSH_HOST`
+- `SSH_HOST` (example: `209.46.120.80`)
 - `SSH_PRIVATE_KEY`
-- `SSH_USER`
-- `WORK_DIR`
+- `SSH_USER` (example: `administrator`)
+- `WORK_DIR` (example: `/home/administrator/Desktop/Project/clearhealth-mvp`)
 - `DOPPLER_TOKEN`
 
 Optional:
 
-- `DOPPLER_PROJECT` (default: `clearhealth-mvp`)
-- `DOPPLER_CONFIG_STAGING` (default: `stg`)
-- `DOPPLER_CONFIG_PROD` (default: `prd`)
-- `STAGING_HEALTH_URL` (for workflow verification)
-- `PROD_HEALTH_URL` (for workflow verification)
+- `DOPPLER_PROJECT` (default: `trial-atlas`)
+- `DOPPLER_CONFIG` (ignored by deploy workflow; deploy is fixed to `prd`)
+- `HEALTH_URL` (example: `https://linux.achievengine.com/api/health`)
 - `SUDO_PASSWORD` (only if your SSH user requires sudo password for Caddyfile update)
-- `STAGING_SERVER_DOMAIN`, `PROD_SERVER_DOMAIN`
-- `STAGING_PORT_A`, `STAGING_PORT_B`, `PROD_PORT_A`, `PROD_PORT_B`
-- `STAGING_DEPLOY_STACK_NAME`, `PROD_DEPLOY_STACK_NAME`
-- `STAGING_NETWORK_NAME`, `PROD_NETWORK_NAME`
-- `STAGING_REDIS_VOLUME_NAME`, `PROD_REDIS_VOLUME_NAME`
+- `SERVER_DOMAIN` (default: `linux.achievengine.com`)
+- `PORT_A` / `PORT_B` (defaults: `5600` / `5601`)
+- `DEPLOY_STACK_NAME`
+- `NETWORK_NAME`
+- `REDIS_VOLUME_NAME`
 
 ## 3) Branch-to-environment mapping
 
-- `staging` -> `.github/workflows/deploy-staging.yml`
-- `prod` -> `.github/workflows/deploy-prod.yml`
-- `main`/PRs -> `.github/workflows/ci.yml`
+- `main` -> `.github/workflows/deploy.yml` + `.github/workflows/ci.yml`
+- PRs -> `.github/workflows/ci.yml`
 
 ## 4) Server prerequisites
 
@@ -68,13 +62,6 @@ Clone this repo at `WORK_DIR` and ensure workflow SSH user can run:
 
 Deployment scripts detect active ports from Caddy and switch between two ports.
 
-Staging defaults:
-
-- Domain: `staging.linux.achievengine.com`
-- Ports: `5602 <-> 5603`
-
-Production defaults:
-
 - Domain: `linux.achievengine.com`
 - Ports: `5600 <-> 5601`
 
@@ -86,7 +73,7 @@ linux.achievengine.com {
 }
 ```
 
-Override defaults via environment variables before running deploy scripts:
+Override defaults via environment variables before running deploy script:
 
 - `SERVER_DOMAIN`
 - `PORT_A`
@@ -114,6 +101,5 @@ npm run dev:local
 Manual deployment:
 
 ```bash
-npm run deploy:staging
-npm run deploy:prod
+npm run deploy
 ```
