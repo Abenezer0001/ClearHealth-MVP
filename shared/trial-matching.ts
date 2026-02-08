@@ -50,6 +50,7 @@ export interface ConditionMatchResult {
 export interface TrialMatchResult {
     nctId: string;
     briefTitle: string;
+    trial?: ClinicalTrial;
     matchScore: number; // 0-100 percentage
     matchTier: "excellent" | "good" | "moderate" | "low" | "poor";
     totalCriteria: number;
@@ -68,6 +69,7 @@ export interface TrialMatchResult {
 export interface TrialMatchRequest {
     patientId?: string; // If provided, fetches from stored token
     patientProfile?: PatientProfile; // Or provide directly
+    trials?: ClinicalTrial[]; // Optional explicit trial set to score
     limit?: number; // Max trials to return
     minScore?: number; // Minimum match score (0-100)
 }

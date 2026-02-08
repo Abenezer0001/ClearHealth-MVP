@@ -2,7 +2,7 @@ import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import { searchTrials, getTrialByNctId } from "./clinical-trials";
 import { matchTrialsForPatient, calculateTrialMatch } from "./trial-matching";
-import { trialSearchParamsSchema } from "@shared/trials";
+import { trialSearchParamsSchema, type ClinicalTrial } from "@shared/trials";
 import type { TrialMatchRequest, TrialMatchResponse } from "@shared/trial-matching";
 import { ZodError } from "zod";
 import { fromZodError } from "zod-validation-error";
@@ -22,6 +22,27 @@ import {
 } from "./smart-fhir";
 import { getMongoDb, getNextSequence } from "./mongo";
 import { findUserBySessionId } from "./user-record-lookup";
+
+function isMeaningfulText(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  const normalized = trimmed.toLowerCase();
+  return normalized !== "unknown" && normalized !== "unknown patient" && normalized !== "not specified";
+}
+
+function normalizeDiagnosisSummary(value: unknown): string {
+  if (typeof value !== "string") return "";
+  const parts = value
+    .split(/[;,]/)
+    .map((part) => part.trim())
+    .filter((part) => {
+      const normalized = part.toLowerCase();
+      return Boolean(part) && normalized !== "unknown" && normalized !== "not specified";
+    });
+
+  return Array.from(new Set(parts)).slice(0, 5).join(", ");
+}
 
 export async function registerRoutes(
   httpServer: Server,
@@ -56,7 +77,10 @@ export async function registerRoutes(
           return res.status(401).json({ error: "Unauthorized" });
         }
 
-        const userRole = (session.user as any).role;
+        const db = await getMongoDb();
+        const userCollection = db.collection("user");
+        const dbUser = await findUserBySessionId(userCollection, session.user.id);
+        const userRole = dbUser?.role;
         if (!userRole || !allowedRoles.includes(userRole)) {
           return res.status(403).json({ error: "Forbidden: insufficient permissions" });
         }
@@ -207,53 +231,68 @@ export async function registerRoutes(
   // Match trials for connected patient
   app.post("/api/trials/match", requireAuth, async (req, res) => {
     try {
-      const { patientId, limit = 20, minScore = 0 } = req.body as TrialMatchRequest;
+      const { patientId, limit = 20, minScore = 0, trials } = req.body as TrialMatchRequest;
 
-      // Get patient ID from request or from stored SMART connection
-      const pid = patientId || req.body.patientId;
-      if (!pid) {
-        return res.status(400).json({ error: "Patient ID required. Connect your health record first." });
+      const session = await auth.api.getSession({ headers: fromNodeHeaders(req.headers) });
+      const userId = session?.user?.id;
+      if (!userId) {
+        return res.status(401).json({ error: "User not authenticated" });
       }
 
-      // Get stored token and fetch patient data
-      const token = getStoredToken(pid);
-      if (!token) {
-        return res.status(401).json({ error: "No valid session for this patient. Please reconnect your health record." });
+      const connection = await getTokenForUser(userId);
+      if (!connection) {
+        return res.status(401).json({ error: "No connected health record. Please reconnect your SMART on FHIR account." });
       }
+
+      if (patientId && patientId !== connection.patientId) {
+        return res.status(403).json({ error: "Patient ID does not match your connected health record." });
+      }
+
+      const pid = connection.patientId;
 
       // Fetch patient profile
       const profile = await fetchPatientData(
-        token.iss || "https://launch.smarthealthit.org/v/r4/sim/WzIsIiIsIiIsIkFVVE8iLDAsMCwwLCIiLCIiLCIiLCIiLCIiLCIiLCIiLDAsMSwiIl0/fhir",
-        token.access_token,
+        connection.fhirBaseUrl,
+        connection.token.access_token,
         pid
       );
 
-      // Get patient conditions for targeted trial search
       const patientConditions = profile.conditions
         .filter(c => c.clinicalStatus?.toLowerCase() === "active")
         .map(c => c.display)
         .slice(0, 5);
 
-      // Search for trials related to patient conditions
-      const searchPromises = patientConditions.map(condition =>
-        searchTrials({ condition, pageSize: 10 })
-      );
-
-      // Also search for common trial types
-      searchPromises.push(searchTrials({ pageSize: 20 }));
-
-      const searchResults = await Promise.all(searchPromises);
-
-      // Deduplicate trials by NCT ID
-      const trialsMap = new Map();
-      for (const result of searchResults) {
-        for (const trial of result.studies) {
-          if (!trialsMap.has(trial.nctId)) {
-            trialsMap.set(trial.nctId, trial);
+      let uniqueTrials: ClinicalTrial[];
+      if (Array.isArray(trials) && trials.length > 0) {
+        const byNctId = new Map<string, ClinicalTrial>();
+        for (const trial of trials) {
+          if (trial?.nctId && !byNctId.has(trial.nctId)) {
+            byNctId.set(trial.nctId, trial);
           }
         }
+        uniqueTrials = Array.from(byNctId.values());
+      } else {
+        // Search for trials related to patient conditions
+        const searchPromises = patientConditions.map(condition =>
+          searchTrials({ condition, pageSize: 10 })
+        );
+
+        // Also search for common trial types
+        searchPromises.push(searchTrials({ pageSize: 20 }));
+
+        const searchResults = await Promise.all(searchPromises);
+
+        // Deduplicate trials by NCT ID
+        const trialsMap = new Map<string, ClinicalTrial>();
+        for (const result of searchResults) {
+          for (const trial of result.studies) {
+            if (!trialsMap.has(trial.nctId)) {
+              trialsMap.set(trial.nctId, trial);
+            }
+          }
+        }
+        uniqueTrials = Array.from(trialsMap.values());
       }
-      const uniqueTrials = Array.from(trialsMap.values());
 
       console.log(`[Trial Match] Found ${uniqueTrials.length} unique trials for ${patientConditions.length} conditions`);
 
@@ -280,16 +319,27 @@ export async function registerRoutes(
   // Get match score for a single trial
   app.post("/api/trials/:nctId/match", requireAuth, async (req, res) => {
     try {
-      const { nctId } = req.params;
+      const rawNctId = req.params.nctId;
+      const nctId = Array.isArray(rawNctId) ? rawNctId[0] : rawNctId;
       const { patientId } = req.body;
 
-      if (!patientId) {
-        return res.status(400).json({ error: "Patient ID required" });
+      if (!nctId) {
+        return res.status(400).json({ error: "Trial ID is required" });
       }
 
-      const token = getStoredToken(patientId);
-      if (!token) {
-        return res.status(401).json({ error: "No valid session. Please reconnect health record." });
+      const session = await auth.api.getSession({ headers: fromNodeHeaders(req.headers) });
+      const userId = session?.user?.id;
+      if (!userId) {
+        return res.status(401).json({ error: "User not authenticated" });
+      }
+
+      const connection = await getTokenForUser(userId);
+      if (!connection) {
+        return res.status(401).json({ error: "No connected health record. Please reconnect your SMART on FHIR account." });
+      }
+
+      if (patientId && patientId !== connection.patientId) {
+        return res.status(403).json({ error: "Patient ID does not match your connected health record." });
       }
 
       const trial = await getTrialByNctId(nctId);
@@ -298,9 +348,9 @@ export async function registerRoutes(
       }
 
       const profile = await fetchPatientData(
-        token.iss || "https://launch.smarthealthit.org/v/r4/fhir",
-        token.access_token,
-        patientId
+        connection.fhirBaseUrl,
+        connection.token.access_token,
+        connection.patientId
       );
 
       const matchResult = await calculateTrialMatch(trial, profile);
@@ -595,6 +645,7 @@ export async function registerRoutes(
       });
 
       const {
+        patientName,
         ageRange,
         sex,
         diagnosisSummary,
@@ -607,27 +658,117 @@ export async function registerRoutes(
         contactEmail,
       } = req.body;
 
-      if (!trialNctId || !diagnosisSummary) {
-        return res.status(400).json({ error: "Trial and diagnosis info required" });
+      if (!trialNctId) {
+        return res.status(400).json({ error: "Trial info is required" });
       }
 
       const db = await getMongoDb();
       const leadId = await getNextSequence("patientLeads");
 
+      const normalizedSharedFields = {
+        labs: Boolean(sharedFields?.labs),
+        meds: Boolean(sharedFields?.meds),
+        location: Boolean(sharedFields?.location),
+        // Always include account email for coordinator follow-up.
+        email: true,
+      };
+
+      let finalPatientName = isMeaningfulText(patientName) ? String(patientName).trim() : (session?.user?.name || "Unknown Patient");
+      let finalAgeRange = isMeaningfulText(ageRange) ? String(ageRange).trim() : "Unknown";
+      let finalSex = isMeaningfulText(sex) ? String(sex).trim() : "Unknown";
+      let finalDiagnosis = normalizeDiagnosisSummary(diagnosisSummary);
+      let finalLocationCity = isMeaningfulText(locationCity) ? String(locationCity).trim() : undefined;
+      let finalActiveMeds = isMeaningfulText(activeMeds) ? String(activeMeds).trim() : undefined;
+      let finalRelevantLabs = isMeaningfulText(relevantLabs) ? String(relevantLabs).trim() : undefined;
+      let leadSource: "smart_fhir" | "manual" = "manual";
+
+      const userId = session?.user?.id;
+      if (userId) {
+        const connection = await getTokenForUser(userId);
+        if (connection) {
+          try {
+            const profile = await fetchPatientData(
+              connection.fhirBaseUrl,
+              connection.token.access_token,
+              connection.patientId
+            );
+
+            leadSource = "smart_fhir";
+
+            finalPatientName = profile.demographics.name || finalPatientName;
+            finalSex = profile.demographics.gender || finalSex;
+
+            if (typeof profile.demographics.age === "number") {
+              const min = Math.max(0, profile.demographics.age - 5);
+              const max = profile.demographics.age + 5;
+              finalAgeRange = `${min}-${max}`;
+            }
+
+            const activeConditions = profile.conditions
+              .filter((c) => c.clinicalStatus?.toLowerCase() === "active")
+              .map((c) => c.display)
+              .filter(Boolean);
+            const allConditions = profile.conditions
+              .map((c) => c.display)
+              .filter(Boolean);
+            const diagnosisPool = activeConditions.length > 0 ? activeConditions : allConditions;
+            if (diagnosisPool.length > 0) {
+              finalDiagnosis = normalizeDiagnosisSummary(diagnosisPool.slice(0, 5).join(", "));
+            }
+
+            if (!finalLocationCity) {
+              finalLocationCity = profile.demographics.address?.city;
+            }
+
+            if (!finalActiveMeds) {
+              const meds = profile.medications
+                .map((m) => m.display)
+                .filter(Boolean)
+                .slice(0, 5);
+              if (meds.length > 0) {
+                finalActiveMeds = meds.join(", ");
+              }
+            }
+
+            if (!finalRelevantLabs) {
+              const labs = profile.labResults
+                .slice(0, 5)
+                .map((l) => {
+                  const value = l.valueString ?? (l.value !== undefined ? `${l.value}${l.unit ? ` ${l.unit}` : ""}` : "");
+                  return `${l.display}${value ? ` (${value})` : ""}`;
+                })
+                .filter(Boolean);
+              if (labs.length > 0) {
+                finalRelevantLabs = labs.join("; ");
+              }
+            }
+          } catch (profileError) {
+            console.error("Failed to enrich lead from SMART profile:", profileError);
+          }
+        }
+      }
+
+      if (!isMeaningfulText(finalDiagnosis)) {
+        finalDiagnosis = "Not specified";
+      }
+
       const lead = {
         id: leadId,
         patientUserId: session?.user?.id || "unknown",
-        ageRange: ageRange || "Unknown",
-        sex: sex || "Unknown",
-        diagnosisSummary,
+        patientName: finalPatientName,
+        patientEmail: session?.user?.email || contactEmail || "Unknown",
+        ageRange: finalAgeRange,
+        sex: finalSex,
+        diagnosisSummary: finalDiagnosis,
         trialNctId,
         trialTitle: trialTitle || "Unknown Trial",
-        sharedFields: sharedFields || { labs: false, meds: false, location: false, email: false },
-        relevantLabs: sharedFields?.labs ? relevantLabs : undefined,
-        activeMeds: sharedFields?.meds ? activeMeds : undefined,
-        locationCity: sharedFields?.location ? locationCity : undefined,
-        contactEmail: sharedFields?.email ? contactEmail : undefined,
+        sharedFields: normalizedSharedFields,
+        relevantLabs: normalizedSharedFields.labs ? finalRelevantLabs : undefined,
+        activeMeds: normalizedSharedFields.meds ? finalActiveMeds : undefined,
+        locationCity: normalizedSharedFields.location ? finalLocationCity : undefined,
+        contactEmail: session?.user?.email || contactEmail || undefined,
         status: "new",
+        source: leadSource,
         createdAt: new Date(),
       };
 
@@ -645,6 +786,7 @@ export async function registerRoutes(
   app.get("/api/coordinator/leads", requireAuth, requireRole("coordinator"), async (req, res) => {
     try {
       const db = await getMongoDb();
+      const userCollection = db.collection("user");
       // Sort by newest first
       const leads = await db
         .collection("patientLeads")
@@ -652,7 +794,33 @@ export async function registerRoutes(
         .sort({ createdAt: -1 })
         .toArray();
 
-      res.json({ leads });
+      const hydratedLeads = await Promise.all(
+        leads.map(async (lead) => {
+          const hasMeaningfulName = isMeaningfulText(lead.patientName);
+          const hasMeaningfulEmail = isMeaningfulText(lead.patientEmail);
+          if (hasMeaningfulName && hasMeaningfulEmail) {
+            return lead;
+          }
+
+          if (!lead.patientUserId) {
+            return lead;
+          }
+
+          const dbUser = await findUserBySessionId(userCollection, String(lead.patientUserId));
+          if (!dbUser) {
+            return lead;
+          }
+
+          return {
+            ...lead,
+            patientName: hasMeaningfulName ? lead.patientName : (dbUser.name || "Unknown Patient"),
+            patientEmail: hasMeaningfulEmail ? lead.patientEmail : (dbUser.email || lead.contactEmail || "Unknown"),
+            diagnosisSummary: normalizeDiagnosisSummary(lead.diagnosisSummary) || "Not specified",
+          };
+        })
+      );
+
+      res.json({ leads: hydratedLeads });
     } catch (error) {
       console.error("Get leads error:", error);
       res.status(500).json({ error: "Failed to fetch leads" });
@@ -690,6 +858,104 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Update lead error:", error);
       res.status(500).json({ error: "Failed to update lead" });
+    }
+  });
+
+  // Admin: Insights summary (coordinator role only)
+  app.get("/api/admin/insights", requireAuth, requireRole("coordinator"), async (_req, res) => {
+    try {
+      const db = await getMongoDb();
+      const userCollection = db.collection("user");
+      const leads = await db
+        .collection("patientLeads")
+        .find({})
+        .sort({ createdAt: -1 })
+        .toArray();
+
+      const statusCounts = {
+        new: 0,
+        contacted: 0,
+        scheduled: 0,
+        not_fit: 0,
+      };
+      const patientIds = new Set<string>();
+      const trialIds = new Set<string>();
+      const diagnosisCounts = new Map<string, number>();
+
+      for (const lead of leads) {
+        const status = String(lead.status || "new") as keyof typeof statusCounts;
+        if (status in statusCounts) {
+          statusCounts[status] += 1;
+        }
+
+        const pid = String(lead.patientUserId || lead.patientEmail || "");
+        if (pid) patientIds.add(pid);
+
+        const trialId = String(lead.trialNctId || "");
+        if (trialId) trialIds.add(trialId);
+
+        const diagnosisSummary = String(lead.diagnosisSummary || "");
+        const parts = diagnosisSummary
+          .split(/[;,]/)
+          .map((p) => p.trim())
+          .filter((p) => p && p.toLowerCase() !== "not specified" && p.toLowerCase() !== "unknown");
+
+        for (const diagnosis of parts) {
+          diagnosisCounts.set(diagnosis, (diagnosisCounts.get(diagnosis) || 0) + 1);
+        }
+      }
+
+      const totalLeads = leads.length;
+      const engaged = statusCounts.contacted + statusCounts.scheduled;
+      const engagementRate = totalLeads > 0 ? Math.round((engaged / totalLeads) * 100) : 0;
+      const topDiagnoses = Array.from(diagnosisCounts.entries())
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 8)
+        .map(([diagnosis, count]) => ({ diagnosis, count }));
+
+      const recentLeads = await Promise.all(
+        leads.slice(0, 10).map(async (lead) => {
+          const hasMeaningfulName = isMeaningfulText(lead.patientName);
+          const hasMeaningfulEmail = isMeaningfulText(lead.patientEmail);
+          let patientName = hasMeaningfulName ? lead.patientName : "Unknown Patient";
+          let patientEmail = hasMeaningfulEmail ? lead.patientEmail : (lead.contactEmail || "Unknown");
+
+          if ((!hasMeaningfulName || !hasMeaningfulEmail) && lead.patientUserId) {
+            const dbUser = await findUserBySessionId(userCollection, String(lead.patientUserId));
+            if (dbUser) {
+              patientName = hasMeaningfulName ? lead.patientName : (dbUser.name || patientName);
+              patientEmail = hasMeaningfulEmail ? lead.patientEmail : (dbUser.email || patientEmail);
+            }
+          }
+
+          return {
+            id: lead.id,
+            createdAt: lead.createdAt,
+            patientName,
+            patientEmail,
+            diagnosisSummary: normalizeDiagnosisSummary(lead.diagnosisSummary) || "Not specified",
+            trialTitle: lead.trialTitle || "Unknown Trial",
+            trialNctId: lead.trialNctId || "N/A",
+            status: lead.status || "new",
+          };
+        })
+      );
+
+      res.json({
+        summary: {
+          totalLeads,
+          uniquePatients: patientIds.size,
+          uniqueTrials: trialIds.size,
+          engaged,
+          engagementRate,
+        },
+        statusCounts,
+        topDiagnoses,
+        recentLeads,
+      });
+    } catch (error) {
+      console.error("Admin insights error:", error);
+      res.status(500).json({ error: "Failed to fetch admin insights" });
     }
   });
 

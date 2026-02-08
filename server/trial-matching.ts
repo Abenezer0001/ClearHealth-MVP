@@ -500,6 +500,7 @@ export async function calculateTrialMatch(
     return {
         nctId: trial.nctId,
         briefTitle: trial.briefTitle,
+        trial,
         matchScore: finalScore,
         matchTier: getTier(finalScore),
         totalCriteria,

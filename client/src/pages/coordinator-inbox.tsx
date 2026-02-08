@@ -19,33 +19,31 @@ import {
     TableRow,
 } from "@/components/ui/table";
 import {
-    Dialog,
-    DialogContent,
-    DialogHeader,
-    DialogTitle,
-} from "@/components/ui/dialog";
+    Sheet,
+    SheetContent,
+    SheetDescription,
+    SheetHeader,
+    SheetTitle,
+} from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import {
     Inbox,
     User,
-    Stethoscope,
     TestTube,
     Pill,
     MapPin,
     Mail,
     Check,
-    X,
-    Clock,
-    Phone,
     ExternalLink,
-    FileText,
 } from "lucide-react";
 
 interface Lead {
     id: number;
     patientUserId: string;
+    patientName?: string;
+    patientEmail?: string;
     ageRange: string;
     sex: string;
     diagnosisSummary: string;
@@ -60,13 +58,6 @@ interface Lead {
     coordinatorNotes?: string;
     createdAt: string;
 }
-
-const statusColors: Record<string, string> = {
-    new: "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300",
-    contacted: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300",
-    scheduled: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300",
-    not_fit: "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400",
-};
 
 const statusLabels: Record<string, string> = {
     new: "New",
@@ -136,7 +127,7 @@ export default function CoordinatorInboxPage() {
     };
 
     return (
-        <div className="max-w-6xl mx-auto p-6 space-y-6">
+        <div className="w-full p-6 md:p-8 space-y-6">
             {/* Header */}
             <div className="flex items-center justify-between" data-testid="section-coordinator-header">
                 <div className="flex items-center gap-3">
@@ -212,21 +203,32 @@ export default function CoordinatorInboxPage() {
                                     <TableHead>Trial</TableHead>
                                     <TableHead>Shared</TableHead>
                                     <TableHead>Status</TableHead>
-                                    <TableHead></TableHead>
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
                                 {filteredLeads.map((lead) => (
-                                    <TableRow key={lead.id}>
+                                    <TableRow
+                                        key={lead.id}
+                                        className="cursor-pointer hover:bg-muted/40"
+                                        onClick={() => setSelectedLead(lead)}
+                                    >
                                         <TableCell className="text-sm text-muted-foreground">
                                             {new Date(lead.createdAt).toLocaleDateString()}
                                         </TableCell>
                                         <TableCell>
-                                            <div className="flex items-center gap-2">
+                                            <div className="flex items-start gap-2">
                                                 <User className="h-4 w-4 text-muted-foreground" />
-                                                <span>
-                                                    {lead.ageRange}, {lead.sex}
-                                                </span>
+                                                <div>
+                                                    <div className="font-medium">
+                                                        {lead.patientName || "Unknown Patient"}
+                                                    </div>
+                                                    <div className="text-xs text-muted-foreground">
+                                                        {lead.patientEmail || "No email"}
+                                                    </div>
+                                                    <div className="text-xs text-muted-foreground">
+                                                        {lead.ageRange}, {lead.sex}
+                                                    </div>
+                                                </div>
                                             </div>
                                         </TableCell>
                                         <TableCell>
@@ -245,16 +247,24 @@ export default function CoordinatorInboxPage() {
                                         <TableCell>
                                             <div className="flex gap-1">
                                                 {lead.sharedFields.labs && (
-                                                    <TestTube className="h-4 w-4 text-blue-500" title="Labs shared" />
+                                                    <span title="Labs shared">
+                                                        <TestTube className="h-4 w-4 text-blue-500" />
+                                                    </span>
                                                 )}
                                                 {lead.sharedFields.meds && (
-                                                    <Pill className="h-4 w-4 text-purple-500" title="Meds shared" />
+                                                    <span title="Meds shared">
+                                                        <Pill className="h-4 w-4 text-purple-500" />
+                                                    </span>
                                                 )}
                                                 {lead.sharedFields.location && (
-                                                    <MapPin className="h-4 w-4 text-amber-500" title="Location shared" />
+                                                    <span title="Location shared">
+                                                        <MapPin className="h-4 w-4 text-amber-500" />
+                                                    </span>
                                                 )}
                                                 {lead.sharedFields.email && (
-                                                    <Mail className="h-4 w-4 text-cyan-500" title="Email shared" />
+                                                    <span title="Email shared">
+                                                        <Mail className="h-4 w-4 text-cyan-500" />
+                                                    </span>
                                                 )}
                                                 {!lead.sharedFields.labs &&
                                                     !lead.sharedFields.meds &&
@@ -267,34 +277,27 @@ export default function CoordinatorInboxPage() {
                                             </div>
                                         </TableCell>
                                         <TableCell>
-                                            <Select
-                                                value={lead.status}
-                                                onValueChange={(value) =>
-                                                    updateStatusMutation.mutate({
-                                                        leadId: lead.id,
-                                                        status: value,
-                                                    })
-                                                }
-                                            >
-                                                <SelectTrigger className="w-[130px] h-8">
-                                                    <SelectValue />
-                                                </SelectTrigger>
-                                                <SelectContent>
-                                                    <SelectItem value="new">New</SelectItem>
-                                                    <SelectItem value="contacted">Contacted</SelectItem>
-                                                    <SelectItem value="scheduled">Scheduled</SelectItem>
-                                                    <SelectItem value="not_fit">Not a Fit</SelectItem>
-                                                </SelectContent>
-                                            </Select>
-                                        </TableCell>
-                                        <TableCell>
-                                            <Button
-                                                variant="ghost"
-                                                size="sm"
-                                                onClick={() => setSelectedLead(lead)}
-                                            >
-                                                <FileText className="h-4 w-4" />
-                                            </Button>
+                                            <div onClick={(e) => e.stopPropagation()}>
+                                                <Select
+                                                    value={lead.status}
+                                                    onValueChange={(value) =>
+                                                        updateStatusMutation.mutate({
+                                                            leadId: lead.id,
+                                                            status: value,
+                                                        })
+                                                    }
+                                                >
+                                                    <SelectTrigger className="w-[130px] h-8">
+                                                        <SelectValue />
+                                                    </SelectTrigger>
+                                                    <SelectContent>
+                                                        <SelectItem value="new">New</SelectItem>
+                                                        <SelectItem value="contacted">Contacted</SelectItem>
+                                                        <SelectItem value="scheduled">Scheduled</SelectItem>
+                                                        <SelectItem value="not_fit">Not a Fit</SelectItem>
+                                                    </SelectContent>
+                                                </Select>
+                                            </div>
                                         </TableCell>
                                     </TableRow>
                                 ))}
@@ -304,19 +307,33 @@ export default function CoordinatorInboxPage() {
                 </CardContent>
             </Card>
 
-            {/* Lead Detail Dialog */}
-            <Dialog open={!!selectedLead} onOpenChange={() => setSelectedLead(null)}>
-                <DialogContent className="sm:max-w-lg surface-elevated">
-                    <DialogHeader>
-                        <DialogTitle className="flex items-center gap-2">
+            {/* Lead Detail Sidebar */}
+            <Sheet open={!!selectedLead} onOpenChange={(open) => !open && setSelectedLead(null)}>
+                <SheetContent side="right" className="w-full sm:max-w-2xl overflow-y-auto">
+                    <SheetHeader>
+                        <SheetTitle className="flex items-center gap-2">
                             <User className="h-5 w-5 text-muted-foreground" />
                             Lead Details
-                        </DialogTitle>
-                    </DialogHeader>
+                        </SheetTitle>
+                        <SheetDescription>
+                            Patient profile and shared medical details for coordinator follow-up.
+                        </SheetDescription>
+                    </SheetHeader>
 
                     {selectedLead && (
-                        <div className="space-y-4">
+                        <div className="space-y-4 mt-6">
                             {/* Patient Info */}
+                            <div className="grid grid-cols-2 gap-4 text-sm">
+                                <div>
+                                    <Label className="text-muted-foreground">Patient</Label>
+                                    <div className="font-medium">{selectedLead.patientName || "Unknown Patient"}</div>
+                                </div>
+                                <div>
+                                    <Label className="text-muted-foreground">Email</Label>
+                                    <div className="font-medium">{selectedLead.patientEmail || "No email"}</div>
+                                </div>
+                            </div>
+
                             <div className="grid grid-cols-2 gap-4 text-sm">
                                 <div>
                                     <Label className="text-muted-foreground">Age Range</Label>
@@ -429,8 +446,8 @@ export default function CoordinatorInboxPage() {
                             </div>
                         </div>
                     )}
-                </DialogContent>
-            </Dialog>
+                </SheetContent>
+            </Sheet>
         </div>
     );
 }

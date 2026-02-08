@@ -12,7 +12,14 @@ import {
     Loader2,
 } from "lucide-react";
 import { authClient } from "@/lib/auth-client";
-import { clearPreAuthRole, getPreAuthRole, setPreAuthRole, type PreAuthRole } from "@/lib/pre-auth-role";
+import {
+    clearPreAuthRole,
+    getPreAuthRole,
+    resolveAuthEntryPath,
+    setPreAuthRole,
+    type AuthEntryIntent,
+    type PreAuthRole,
+} from "@/lib/pre-auth-role";
 
 export default function RoleSelectionPage() {
     const [, setLocation] = useLocation();
@@ -22,6 +29,10 @@ export default function RoleSelectionPage() {
     const isAuthenticated = Boolean(session?.user);
     const [selectedRole, setSelectedRole] = useState<PreAuthRole | null>(getPreAuthRole());
     const hasAutoSubmittedRef = useRef(false);
+    const authIntent: AuthEntryIntent =
+        typeof window !== "undefined" && new URLSearchParams(window.location.search).get("intent") === "register"
+            ? "register"
+            : "login";
 
     const setRoleMutation = useMutation({
         mutationFn: async (role: PreAuthRole) => {
@@ -86,9 +97,9 @@ export default function RoleSelectionPage() {
         setPreAuthRole(role);
         toast({
             title: "Role selected",
-            description: `Continue to login as a ${role}.`,
+            description: `Continue as a ${role} to ${authIntent === "register" ? "create your account" : "sign in"}.`,
         });
-        setLocation("/login");
+        setLocation(resolveAuthEntryPath(authIntent, role));
     };
 
     useEffect(() => {
@@ -124,7 +135,7 @@ export default function RoleSelectionPage() {
                                 if (selectedRole) {
                                     setPreAuthRole(selectedRole);
                                 }
-                                setLocation("/login");
+                                setLocation("/login?mode=signin");
                             }}
                             className="text-primary hover:underline font-medium"
                         >
@@ -146,6 +157,9 @@ export default function RoleSelectionPage() {
                         <h1 className="text-3xl font-bold tracking-tight">Welcome to TrialAtlas</h1>
                         <p className="text-muted-foreground text-lg">
                             How will you be using the platform?
+                        </p>
+                        <p className="text-sm text-muted-foreground">
+                            Next step: {authIntent === "register" ? "create your account" : "sign in"}.
                         </p>
                     </div>
 
@@ -192,7 +206,11 @@ export default function RoleSelectionPage() {
                                             {isAuthenticated ? "Setting up..." : "Continuing..."}
                                         </>
                                     ) : (
-                                        isAuthenticated ? "Continue as Patient" : "Continue as Patient to Login"
+                                        isAuthenticated
+                                            ? "Continue as Patient"
+                                            : authIntent === "register"
+                                                ? "Continue as Patient to Create Account"
+                                                : "Continue as Patient to Sign In"
                                     )}
                                 </Button>
                             </CardContent>
@@ -239,7 +257,11 @@ export default function RoleSelectionPage() {
                                             {isAuthenticated ? "Setting up..." : "Continuing..."}
                                         </>
                                     ) : (
-                                        isAuthenticated ? "Continue as Coordinator" : "Continue as Coordinator to Login"
+                                        isAuthenticated
+                                            ? "Continue as Coordinator"
+                                            : authIntent === "register"
+                                                ? "Continue as Coordinator to Create Account"
+                                                : "Continue as Coordinator to Sign In"
                                     )}
                                 </Button>
                             </CardContent>

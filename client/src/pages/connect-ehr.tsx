@@ -260,10 +260,10 @@ export default function ConnectEHRPage() {
 
     return (
         <div className="min-h-full">
-            <div className="max-w-4xl mx-auto p-6 md:p-8 space-y-8">
+            <div className="w-full p-6 md:p-8 space-y-8">
                 {/* Header */}
-                <section className="section-shell text-center space-y-4 py-8" data-testid="section-connect-ehr-header">
-                    <div className="flex items-center justify-center gap-3">
+                <section className="section-shell space-y-4 py-8" data-testid="section-connect-ehr-header">
+                    <div className="flex items-center justify-start gap-3">
                         <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary">
                             <Heart className="h-7 w-7 text-primary-foreground" />
                         </div>
@@ -271,13 +271,13 @@ export default function ConnectEHRPage() {
                             Connect Health Record
                         </h1>
                     </div>
-                    <p className="text-lg text-muted-foreground max-w-2xl mx-auto text-balance">
-                        Import your diagnoses, lab results, and medications from your healthcare provider
-                        to find clinical trials that match your profile.
+                    <p className="text-lg text-muted-foreground max-w-3xl text-balance">
+                        Securely import diagnoses, lab results, and medications from your provider so our
+                        AI-assisted matching can find trials that fit your profile.
                     </p>
-                    <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
+                    <div className="flex items-center justify-start gap-2 text-sm text-muted-foreground">
                         <Sparkles className="h-4 w-4 text-primary" />
-                        <span>SMART on FHIR • HL7 FHIR R4</span>
+                        <span>SMART on FHIR secure authorization • HL7 FHIR R4</span>
                     </div>
                 </section>
 
@@ -402,17 +402,20 @@ export default function ConnectEHRPage() {
                             </li>
                             <li className="flex gap-3">
                                 <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-medium text-primary">2</span>
-                                <span>Log in to your patient portal and grant permission</span>
+                                <span>Sign in to your portal and approve SMART on FHIR access</span>
                             </li>
                             <li className="flex gap-3">
                                 <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-medium text-primary">3</span>
-                                <span>Your diagnoses, labs, and medications are imported securely</span>
+                                <span>TrialAtlas uses AI-assisted matching on your clinical profile to rank relevant trials</span>
                             </li>
                             <li className="flex gap-3">
                                 <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-medium text-primary">4</span>
-                                <span>We match your profile against trial eligibility criteria</span>
+                                <span>Coordinators only receive the fields you choose when you express interest</span>
                             </li>
                         </ol>
+                        <p className="mt-4 text-xs text-muted-foreground">
+                            You control sharing per trial. Disconnect anytime from this page.
+                        </p>
                         <div className="mt-4 pt-4 border-t border-border">
                             <a
                                 href="https://smarthealthit.org/"

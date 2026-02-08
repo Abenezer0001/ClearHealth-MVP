@@ -66,6 +66,13 @@ function getDefaultRoute(role: TourRole): string {
   return role === "patient" ? "/connect-ehr" : "/coordinator-inbox";
 }
 
+function navigateToRoute(route: string): void {
+  if (!isBrowser()) return;
+  if (window.location.pathname === route) return;
+  window.history.pushState({}, "", route);
+  window.dispatchEvent(new PopStateEvent("popstate"));
+}
+
 function hasPrimaryTarget(role: TourRole): boolean {
   if (!isBrowser()) return false;
   return Boolean(window.document.querySelector(getPrimarySelector(role)));
@@ -76,9 +83,7 @@ function ensureRouteAndElement(route: string, selector: string): Promise<void> {
 
   return new Promise((resolve) => {
     if (window.location.pathname !== route) {
-      window.location.assign(route);
-      resolve();
-      return;
+      navigateToRoute(route);
     }
 
     const start = Date.now();
@@ -129,22 +134,22 @@ function createPatientTour() {
   };
 
   tour.addStep({
-    id: "patient-tour-connect-nav",
-    title: "Start here first",
-    text: "Before searching trials, connect your health record from this menu item.",
+    id: "patient-tour-connect-first",
+    title: "Start Here: Connect Your Health Record",
+    text: "Connect your record first so TrialAtlas can use AI-assisted matching to find more relevant trials.",
     attachTo: {
-      element: '[data-testid="link-nav-connect-health-record"]',
-      on: "right",
+      element: '[data-testid="section-connect-ehr-header"]',
+      on: "bottom",
     },
     beforeShowPromise: () =>
-      ensureRouteAndElement("/connect-ehr", '[data-testid="link-nav-connect-health-record"]'),
+      ensureRouteAndElement("/connect-ehr", '[data-testid="section-connect-ehr-header"]'),
     buttons: [skipButton, nextButton],
   });
 
   tour.addStep({
     id: "patient-tour-connect-provider",
     title: "Connect your provider",
-    text: "Select your provider and complete authorization to import your health profile.",
+    text: "Use SMART on FHIR secure authorization to connect your provider and import your profile.",
     attachTo: {
       element: () =>
         window.document.querySelector<HTMLElement>(
@@ -162,8 +167,8 @@ function createPatientTour() {
 
   tour.addStep({
     id: "patient-tour-how-it-works",
-    title: "What happens next",
-    text: "This section explains how your records are securely used for matching.",
+    title: "Your Data Controls",
+    text: "We use your health data to match trials, and only share selected fields with coordinators when you express interest.",
     attachTo: {
       element: '[data-testid="card-connect-how-it-works"]',
       on: "bottom",
@@ -174,9 +179,9 @@ function createPatientTour() {
   });
 
   tour.addStep({
-    id: "patient-tour-find-trials-nav",
-    title: "Go to trial search",
-    text: "After connecting your record, go to Find Trials.",
+    id: "patient-tour-after-connect",
+    title: "Go to Find Trials",
+    text: "After connecting your record, go to Find Trials to see AI-matched studies.",
     attachTo: {
       element: '[data-testid="link-nav-find-trials"]',
       on: "right",
@@ -269,7 +274,7 @@ function createCoordinatorTour() {
   tour.addStep({
     id: "coordinator-tour-admin",
     title: "Admin Dashboard",
-    text: "Use Admin for overall trial and recruitment insights.",
+    text: "Open Admin for live lead insights and diagnosis trends.",
     attachTo: {
       element: '[data-testid="link-nav-admin"]',
       on: "right",
@@ -279,10 +284,10 @@ function createCoordinatorTour() {
 
   tour.addStep({
     id: "coordinator-tour-account",
-    title: "Account Menu",
-    text: "Replay this tour anytime from here.",
+    title: "Replay Tour",
+    text: "Use this button anytime to replay the guided walkthrough.",
     attachTo: {
-      element: '[data-testid="button-user-menu"]',
+      element: '[data-testid="button-tour-trigger"]',
       on: "bottom",
     },
     buttons: [backButton, { text: "Finish", action: () => tour.complete() }],
@@ -316,7 +321,7 @@ export function startRoleTour(role: TourRole, options?: { force?: boolean }): vo
     writePendingTour({ role, force: Boolean(options?.force) });
     const route = getDefaultRoute(role);
     if (window.location.pathname !== route) {
-      window.location.assign(route);
+      navigateToRoute(route);
     }
     return;
   }

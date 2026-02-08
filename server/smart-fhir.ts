@@ -173,6 +173,90 @@ export async function hasValidConnection(userId: string): Promise<boolean> {
     return connection !== null;
 }
 
+// ============================================================================
+// MongoDB Auth State Persistence (for OAuth flow survival)
+// ============================================================================
+
+interface StoredAuthState extends SMARTAuthState {
+    createdAt: Date;
+    expiresAt: Date;
+}
+
+/**
+ * Store auth state in MongoDB for OAuth flow (survives HMR/restarts)
+ */
+async function storeAuthState(state: string, authState: SMARTAuthState): Promise<void> {
+    const db = await getMongoDb();
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + 10 * 60 * 1000); // 10 minutes TTL
+
+    await db.collection("smartAuthStates").updateOne(
+        { state },
+        {
+            $set: {
+                state,
+                ...authState,
+                createdAt: now,
+                expiresAt,
+            },
+        },
+        { upsert: true }
+    );
+
+    // Also keep in memory cache for speed
+    authStates.set(state, authState);
+    console.log(`[SMART-FHIR] Auth state stored in DB for state: ${state.substring(0, 8)}...`);
+}
+
+/**
+ * Get auth state from MongoDB (with fallback to memory cache)
+ */
+async function getAuthState(state: string): Promise<SMARTAuthState | null> {
+    // Try memory cache first
+    const cached = authStates.get(state);
+    if (cached) {
+        console.log(`[SMART-FHIR] Auth state found in cache for state: ${state.substring(0, 8)}...`);
+        return cached;
+    }
+
+    // Fallback to database
+    const db = await getMongoDb();
+    const stored = await db.collection<StoredAuthState>("smartAuthStates").findOne({ state });
+
+    if (!stored) {
+        console.log(`[SMART-FHIR] Auth state NOT FOUND for state: ${state.substring(0, 8)}...`);
+        return null;
+    }
+
+    if (stored.expiresAt < new Date()) {
+        console.log(`[SMART-FHIR] Auth state EXPIRED for state: ${state.substring(0, 8)}...`);
+        await db.collection("smartAuthStates").deleteOne({ state });
+        return null;
+    }
+
+    console.log(`[SMART-FHIR] Auth state found in DB for state: ${state.substring(0, 8)}...`);
+
+    // Restore to cache
+    const authState: SMARTAuthState = {
+        fhirBaseUrl: stored.fhirBaseUrl,
+        redirectUri: stored.redirectUri,
+        codeVerifier: stored.codeVerifier,
+    };
+    authStates.set(state, authState);
+
+    return authState;
+}
+
+/**
+ * Delete auth state after use
+ */
+async function deleteAuthState(state: string): Promise<void> {
+    authStates.delete(state);
+    const db = await getMongoDb();
+    await db.collection("smartAuthStates").deleteOne({ state });
+}
+
+
 const REQUEST_TIMEOUT_MS = 15000;
 
 // ============================================================================
@@ -319,8 +403,8 @@ export async function buildAuthorizationUrl(
     const codeChallenge = generateCodeChallenge(codeVerifier);
     const state = generateState();
 
-    // Store state for callback verification
-    authStates.set(state, {
+    // Store state for callback verification (in DB for persistence across HMR/restarts)
+    await storeAuthState(state, {
         state,
         codeVerifier,
         redirectUri,
@@ -351,13 +435,14 @@ export async function exchangeCodeForToken(
     code: string,
     state: string
 ): Promise<{ token: SMARTTokenResponse; fhirBaseUrl: string }> {
-    const authState = authStates.get(state);
+    // Get auth state from database (survives HMR/restarts)
+    const authState = await getAuthState(state);
     if (!authState) {
         throw new Error("Invalid or expired state parameter");
     }
 
-    // Clean up state
-    authStates.delete(state);
+    // Clean up state from DB
+    await deleteAuthState(state);
 
     // Fetch SMART configuration to get token endpoint
     const config = await getSmartConfiguration(authState.fhirBaseUrl);

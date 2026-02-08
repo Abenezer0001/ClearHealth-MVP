@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { Stethoscope } from "lucide-react";
 import SignInForm from "@/components/sign-in-form";
@@ -6,9 +6,18 @@ import SignUpForm from "@/components/sign-up-form";
 import { getPreAuthRole } from "@/lib/pre-auth-role";
 
 export default function LoginPage() {
-  const [, setLocation] = useLocation();
-  const [showSignIn, setShowSignIn] = useState(true);
+  const [location, setLocation] = useLocation();
+  const initialMode =
+    typeof window !== "undefined"
+      ? new URLSearchParams(window.location.search).get("mode")
+      : null;
+  const [showSignIn, setShowSignIn] = useState(initialMode !== "signup");
   const preAuthRole = getPreAuthRole();
+
+  useEffect(() => {
+    const mode = new URLSearchParams(window.location.search).get("mode");
+    setShowSignIn(mode !== "signup");
+  }, [location]);
 
   return (
     <div className="min-h-screen bg-background">

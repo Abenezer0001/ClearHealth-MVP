@@ -98,6 +98,7 @@ function Router({
     return (
       <Switch>
         <Route path="/" component={LandingPage} />
+        <Route path="/landing" component={LandingPage} />
         <Route path="/role-selection" component={RoleSelectionPage} />
         <Route path="/login" component={LoginPage} />
         <Route>
@@ -122,6 +123,7 @@ function Router({
   return (
     <Switch>
       <Route path="/" component={TrialsPage} />
+      <Route path="/landing" component={LandingPage} />
       <Route path="/login">
         <Redirect to="/" />
       </Route>

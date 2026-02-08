@@ -39,6 +39,7 @@ interface ShareInterestDialogProps {
     trial: ClinicalTrial | null;
     matchScore?: number;
     patientData?: {
+        name?: string;
         age?: number;
         sex?: string;
         conditions?: string[];
@@ -129,6 +130,7 @@ export function ShareInterestDialog({
                 body: JSON.stringify({
                     trialNctId: trial.nctId,
                     trialTitle: trial.briefTitle,
+                    patientName: patientData?.name,
                     ageRange: patientData?.age ? `${patientData.age - 5}-${patientData.age + 5}` : "Unknown",
                     sex: patientData?.sex || "Unknown",
                     diagnosisSummary: patientData?.conditions?.slice(0, 3).join(", ") || "Not specified",
