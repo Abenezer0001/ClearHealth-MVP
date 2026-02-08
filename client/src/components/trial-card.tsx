@@ -1,14 +1,17 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { MapPin, Calendar, Users, ExternalLink, ChevronRight, Heart } from "lucide-react";
+import { MapPin, Calendar, Users, ExternalLink, ChevronRight, Heart, Check, AlertTriangle } from "lucide-react";
 import type { ClinicalTrial } from "@shared/trials";
+import type { TrialMatchResult } from "@shared/trial-matching";
+import { cn } from "@/lib/utils";
 
 interface TrialCardProps {
     trial: ClinicalTrial;
     onViewDetails: (trial: ClinicalTrial) => void;
     onShowInterest?: (trial: ClinicalTrial) => void;
     hasEhrConnected?: boolean;
+    matchResult?: TrialMatchResult;
 }
 
 // Status color mapping
@@ -55,9 +58,19 @@ function getLocationSummary(trial: ClinicalTrial): string {
     return summary;
 }
 
-export function TrialCard({ trial, onViewDetails, onShowInterest, hasEhrConnected }: TrialCardProps) {
+export function TrialCard({ trial, onViewDetails, onShowInterest, hasEhrConnected, matchResult }: TrialCardProps) {
     const statusClass = statusColors[trial.overallStatus] || statusColors.UNKNOWN;
     const phase = formatPhase(trial.phases);
+
+    // Match score display config
+    const getScoreConfig = (score: number) => {
+        if (score >= 80) return { color: "text-green-600", bg: "bg-green-100 dark:bg-green-900/40", label: "Excellent" };
+        if (score >= 60) return { color: "text-emerald-600", bg: "bg-emerald-100 dark:bg-emerald-900/40", label: "Good" };
+        if (score >= 40) return { color: "text-amber-600", bg: "bg-amber-100 dark:bg-amber-900/40", label: "Moderate" };
+        return { color: "text-red-600", bg: "bg-red-100 dark:bg-red-900/40", label: "Low" };
+    };
+
+    const scoreConfig = matchResult ? getScoreConfig(matchResult.matchScore) : null;
 
     return (
         <Card className="surface-panel hover-elevate group transition-all duration-200 cursor-pointer" onClick={() => onViewDetails(trial)}>
@@ -73,13 +86,59 @@ export function TrialCard({ trial, onViewDetails, onShowInterest, hasEhrConnecte
                                     {phase}
                                 </Badge>
                             )}
+                            {/* Match Score Badge */}
+                            {matchResult && scoreConfig && (
+                                <Badge
+                                    variant="outline"
+                                    className={cn(
+                                        "text-xs font-semibold border-0",
+                                        scoreConfig.bg,
+                                        scoreConfig.color
+                                    )}
+                                >
+                                    {matchResult.matchScore}% Match
+                                </Badge>
+                            )}
                         </div>
                         <CardTitle className="text-base font-semibold leading-snug line-clamp-2">
                             {trial.briefTitle}
                         </CardTitle>
                     </div>
-                    <ChevronRight className="h-5 w-5 text-muted-foreground shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
+                    {/* Match Score Circle or Chevron */}
+                    {matchResult && scoreConfig ? (
+                        <div className={cn(
+                            "flex items-center justify-center h-10 w-10 rounded-full shrink-0",
+                            scoreConfig.bg
+                        )}>
+                            <span className={cn("text-lg font-bold", scoreConfig.color)}>
+                                {matchResult.matchScore}
+                            </span>
+                        </div>
+                    ) : (
+                        <ChevronRight className="h-5 w-5 text-muted-foreground shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
+                    )}
                 </div>
+
+                {/* Quick eligibility summary */}
+                {matchResult && (
+                    <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
+                        <span className="flex items-center gap-1 text-green-600">
+                            <Check className="h-3 w-3" />
+                            {matchResult.metCriteria} met
+                        </span>
+                        {matchResult.notMetCriteria > 0 && (
+                            <span className="flex items-center gap-1 text-red-500">
+                                ✗ {matchResult.notMetCriteria} not met
+                            </span>
+                        )}
+                        {matchResult.missingDataCriteria > 0 && (
+                            <span className="flex items-center gap-1 text-amber-500">
+                                <AlertTriangle className="h-3 w-3" />
+                                {matchResult.missingDataCriteria} missing
+                            </span>
+                        )}
+                    </div>
+                )}
             </CardHeader>
             <CardContent className="space-y-3">
                 {/* Conditions */}

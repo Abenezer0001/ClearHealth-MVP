@@ -183,42 +183,6 @@ function createPatientTour() {
     },
     beforeShowPromise: () =>
       ensureRouteAndElement("/connect-ehr", '[data-testid="link-nav-find-trials"]'),
-    buttons: [backButton, nextButton],
-  });
-
-  tour.addStep({
-    id: "patient-tour-condition",
-    title: "Start with your condition",
-    text: "Enter your condition or diagnosis to find matching studies.",
-    attachTo: {
-      element: '[data-testid="input-condition"]',
-      on: "bottom",
-    },
-    beforeShowPromise: () => ensureRouteAndElement("/", '[data-testid="input-condition"]'),
-    buttons: [backButton, nextButton],
-  });
-
-  tour.addStep({
-    id: "patient-tour-location",
-    title: "Add a location",
-    text: "Add your city, state, or country to narrow results near you.",
-    attachTo: {
-      element: '[data-testid="input-location"]',
-      on: "bottom",
-    },
-    beforeShowPromise: () => ensureRouteAndElement("/", '[data-testid="input-location"]'),
-    buttons: [backButton, nextButton],
-  });
-
-  tour.addStep({
-    id: "patient-tour-search",
-    title: "Search trials",
-    text: "Run search and open a trial card to view details and share your interest.",
-    attachTo: {
-      element: '[data-testid="button-search"]',
-      on: "top",
-    },
-    beforeShowPromise: () => ensureRouteAndElement("/", '[data-testid="button-search"]'),
     buttons: [
       backButton,
       {
@@ -408,4 +372,9 @@ export function restartPatientTour(): void {
 export function restartCoordinatorTour(): void {
   clearTourCompleted("coordinator");
   startRoleTour("coordinator", { force: true });
+}
+
+export function restartRoleTour(role: TourRole): void {
+  clearTourCompleted(role);
+  startRoleTour(role, { force: true });
 }

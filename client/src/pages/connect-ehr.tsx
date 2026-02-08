@@ -47,6 +47,26 @@ export default function ConnectEHRPage() {
         },
     });
 
+    // Check if user has a persistent connection in the database
+    const { data: connectionStatus, isLoading: isCheckingConnection } = useQuery<{ connected: boolean; patientId?: string }>({
+        queryKey: ["smart-connection-status"],
+        queryFn: async () => {
+            const res = await fetch("/api/smart/connection-status");
+            if (!res.ok) return { connected: false };
+            return res.json();
+        },
+        staleTime: 60 * 1000, // 1 minute
+    });
+
+    // Restore connection state from database if connected there but not in localStorage
+    useEffect(() => {
+        if (connectionStatus?.connected && connectionStatus.patientId && !connectedPatientId) {
+            console.log("[Connect EHR] Restoring connection from database:", connectionStatus.patientId);
+            localStorage.setItem("smart_patient_id", connectionStatus.patientId);
+            setConnectedPatientId(connectionStatus.patientId);
+        }
+    }, [connectionStatus, connectedPatientId]);
+
     // Fetch patient data if connected
     const { data: patientData, isLoading: patientLoading, refetch: refetchPatient } = useQuery<SmartPatientDataResponse>({
         queryKey: ["smart-patient-data", connectedPatientId],
@@ -55,8 +75,9 @@ export default function ConnectEHRPage() {
             const res = await fetch(`/api/smart/patient-data/${connectedPatientId}`);
             if (!res.ok) {
                 if (res.status === 401) {
-                    // Token expired
+                    // Token expired - clear local state but don't throw
                     localStorage.removeItem("smart_patient_id");
+                    localStorage.removeItem("smart_patient_data");
                     setConnectedPatientId(null);
                     throw new Error("Session expired");
                 }

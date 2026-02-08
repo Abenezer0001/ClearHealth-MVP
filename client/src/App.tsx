@@ -3,6 +3,7 @@ import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { Button } from "@/components/ui/button";
 import { ThemeProvider } from "@/components/theme-provider";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
@@ -10,11 +11,11 @@ import { AppSidebar } from "@/components/app-sidebar";
 import { authClient } from "@/lib/auth-client";
 import { ensureRoleForSignedInUser } from "@/lib/auth-role-flow";
 import { clearPreAuthRole, getPreAuthRole, type PreAuthRole } from "@/lib/pre-auth-role";
-import { resumePendingRoleTour, startRoleTour } from "@/lib/patient-tour";
+import { restartRoleTour, resumePendingRoleTour, startRoleTour } from "@/lib/patient-tour";
 import UserMenu from "@/components/user-menu";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2 } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { Compass, Loader2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import NotFound from "@/pages/not-found";
 import TrialsPage from "@/pages/trials";
 import AdminPage from "@/pages/admin";
@@ -22,6 +23,7 @@ import LoginPage from "@/pages/login";
 import ConnectEHRPage from "@/pages/connect-ehr";
 import CoordinatorInboxPage from "@/pages/coordinator-inbox";
 import RoleSelectionPage from "@/pages/role-selection";
+import LandingPage from "@/pages/landing";
 
 type UserRole = "patient" | "coordinator" | null;
 
@@ -95,10 +97,11 @@ function Router({
   if (!isAuthenticated) {
     return (
       <Switch>
+        <Route path="/" component={LandingPage} />
         <Route path="/role-selection" component={RoleSelectionPage} />
-        {preAuthRole ? <Route path="/login" component={LoginPage} /> : null}
+        <Route path="/login" component={LoginPage} />
         <Route>
-          <Redirect to={preAuthRole ? "/login" : "/role-selection"} />
+          <Redirect to="/" />
         </Route>
       </Switch>
     );
@@ -119,6 +122,9 @@ function Router({
   return (
     <Switch>
       <Route path="/" component={TrialsPage} />
+      <Route path="/login">
+        <Redirect to="/" />
+      </Route>
       <Route path="/role-selection">
         <Redirect to="/" />
       </Route>
@@ -151,6 +157,8 @@ function Router({
 function AppContent() {
   const { data: session, isPending: sessionPending } = authClient.useSession();
   const isAuthenticated = Boolean(session?.user);
+  const [hasServerSession, setHasServerSession] = useState(false);
+  const effectiveAuthenticated = isAuthenticated || hasServerSession;
   const preAuthRole = getPreAuthRole();
   const roleSyncInFlight = useRef(false);
   const roleSyncAttempts = useRef(0);
@@ -162,7 +170,7 @@ function AppContent() {
     isLoading: roleLoading,
     isFetching: roleFetching,
     error: roleError,
-  } = useUserRole(isAuthenticated);
+  } = useUserRole(effectiveAuthenticated);
   const hasTriedAutoTour = useRef(false);
 
   const style = {
@@ -172,19 +180,52 @@ function AppContent() {
 
   // Don't show sidebar on role selection page
   const [location, setLocation] = useLocation();
-  const showSidebar = isAuthenticated && userRole && location !== "/role-selection";
-  const isPending = sessionPending || (isAuthenticated && (roleLoading || roleFetching));
+  const showSidebar = effectiveAuthenticated && userRole && location !== "/role-selection";
+  const isPending = sessionPending || (effectiveAuthenticated && (roleLoading || roleFetching));
 
   useEffect(() => {
-    if (!isAuthenticated) {
+    if (!effectiveAuthenticated) {
       hasTriedAutoTour.current = false;
       roleSyncAttempts.current = 0;
       roleSyncInFlight.current = false;
     }
+  }, [effectiveAuthenticated]);
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      setHasServerSession(false);
+      return;
+    }
+
+    let isMounted = true;
+    const checkSession = async () => {
+      try {
+        const response = await fetch("/api/auth/get-session", {
+          credentials: "include",
+          cache: "no-store",
+        });
+        const data = await response.json().catch(() => null);
+        if (!isMounted) return;
+        setHasServerSession(Boolean(data?.user));
+      } catch {
+        if (!isMounted) return;
+        setHasServerSession(false);
+      }
+    };
+
+    void checkSession();
+    const intervalId = window.setInterval(() => {
+      void checkSession();
+    }, 1000);
+
+    return () => {
+      isMounted = false;
+      window.clearInterval(intervalId);
+    };
   }, [isAuthenticated]);
 
   useEffect(() => {
-    if (!isAuthenticated || !preAuthRole) return;
+    if (!effectiveAuthenticated || !preAuthRole) return;
     if (isPending) return;
     if (roleSyncInFlight.current) return;
 
@@ -216,6 +257,9 @@ function AppContent() {
         roleSyncAttempts.current = 0;
         queryClient.setQueryData(["user-role"], result.role);
         await queryClient.invalidateQueries({ queryKey: ["user-role"] });
+        if (location === "/role-selection") {
+          window.location.assign("/");
+        }
       } catch (error) {
         if (roleSyncAttempts.current >= 3) {
           toast({
@@ -230,10 +274,10 @@ function AppContent() {
     };
 
     void syncRole();
-  }, [isAuthenticated, preAuthRole, isPending, setLocation, toast]);
+  }, [effectiveAuthenticated, preAuthRole, isPending, location, setLocation, toast]);
 
   useEffect(() => {
-    if (!isAuthenticated) return;
+    if (!effectiveAuthenticated) return;
     if (roleLoading || roleFetching) return;
 
     const status = (roleError as Error & { status?: number } | null)?.status;
@@ -246,23 +290,23 @@ function AppContent() {
         },
       },
     });
-  }, [isAuthenticated, roleLoading, roleFetching, roleError, setLocation]);
+  }, [effectiveAuthenticated, roleLoading, roleFetching, roleError, setLocation]);
 
   useEffect(() => {
     if (isPending) return;
-    if (!isAuthenticated || !userRole) return;
+    if (!effectiveAuthenticated || !userRole) return;
     resumePendingRoleTour();
-  }, [isPending, isAuthenticated, userRole, location]);
+  }, [isPending, effectiveAuthenticated, userRole, location]);
 
   useEffect(() => {
     if (hasTriedAutoTour.current) return;
     if (isPending) return;
-    if (!isAuthenticated || !userRole) return;
+    if (!effectiveAuthenticated || !userRole) return;
     if (location !== "/") return;
 
     hasTriedAutoTour.current = true;
     startRoleTour(userRole);
-  }, [isPending, isAuthenticated, userRole, location]);
+  }, [isPending, effectiveAuthenticated, userRole, location]);
 
   if (isPending) {
     return (
@@ -291,11 +335,23 @@ function AppContent() {
               </div>
               <div className="flex items-center gap-2">
                 <ThemeToggle />
+                {userRole ? (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    title="Take product tour"
+                    data-testid="button-tour-trigger"
+                    onClick={() => restartRoleTour(userRole)}
+                  >
+                    <Compass className="h-5 w-5" />
+                    <span className="sr-only">Take product tour</span>
+                  </Button>
+                ) : null}
                 <UserMenu />
               </div>
             </header>
             <main className="flex-1 overflow-auto">
-              <Router isAuthenticated={isAuthenticated} userRole={userRole ?? null} preAuthRole={preAuthRole} />
+              <Router isAuthenticated={effectiveAuthenticated} userRole={userRole ?? null} preAuthRole={preAuthRole} />
             </main>
           </div>
         </div>
@@ -303,7 +359,7 @@ function AppContent() {
     );
   }
 
-  return <Router isAuthenticated={isAuthenticated} userRole={userRole ?? null} preAuthRole={preAuthRole} />;
+  return <Router isAuthenticated={effectiveAuthenticated} userRole={userRole ?? null} preAuthRole={preAuthRole} />;
 }
 
 // Main App component - provides context to children

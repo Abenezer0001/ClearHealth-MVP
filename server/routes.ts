@@ -1,7 +1,9 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import { searchTrials, getTrialByNctId } from "./clinical-trials";
+import { matchTrialsForPatient, calculateTrialMatch } from "./trial-matching";
 import { trialSearchParamsSchema } from "@shared/trials";
+import type { TrialMatchRequest, TrialMatchResponse } from "@shared/trial-matching";
 import { ZodError } from "zod";
 import { fromZodError } from "zod-validation-error";
 import { auth } from "./auth";
@@ -13,6 +15,10 @@ import {
   getAvailableProviders,
   getStoredToken,
   clearStoredToken,
+  storeTokenForUser,
+  getTokenForUser,
+  clearTokenForUser,
+  hasValidConnection,
 } from "./smart-fhir";
 import { getMongoDb, getNextSequence } from "./mongo";
 import { findUserBySessionId } from "./user-record-lookup";
@@ -195,6 +201,117 @@ export async function registerRoutes(
   });
 
   // =========================================================================
+  // AI-Powered Trial Matching
+  // =========================================================================
+
+  // Match trials for connected patient
+  app.post("/api/trials/match", requireAuth, async (req, res) => {
+    try {
+      const { patientId, limit = 20, minScore = 0 } = req.body as TrialMatchRequest;
+
+      // Get patient ID from request or from stored SMART connection
+      const pid = patientId || req.body.patientId;
+      if (!pid) {
+        return res.status(400).json({ error: "Patient ID required. Connect your health record first." });
+      }
+
+      // Get stored token and fetch patient data
+      const token = getStoredToken(pid);
+      if (!token) {
+        return res.status(401).json({ error: "No valid session for this patient. Please reconnect your health record." });
+      }
+
+      // Fetch patient profile
+      const profile = await fetchPatientData(
+        token.iss || "https://launch.smarthealthit.org/v/r4/sim/WzIsIiIsIiIsIkFVVE8iLDAsMCwwLCIiLCIiLCIiLCIiLCIiLCIiLCIiLDAsMSwiIl0/fhir",
+        token.access_token,
+        pid
+      );
+
+      // Get patient conditions for targeted trial search
+      const patientConditions = profile.conditions
+        .filter(c => c.clinicalStatus?.toLowerCase() === "active")
+        .map(c => c.display)
+        .slice(0, 5);
+
+      // Search for trials related to patient conditions
+      const searchPromises = patientConditions.map(condition =>
+        searchTrials({ condition, pageSize: 10 })
+      );
+
+      // Also search for common trial types
+      searchPromises.push(searchTrials({ pageSize: 20 }));
+
+      const searchResults = await Promise.all(searchPromises);
+
+      // Deduplicate trials by NCT ID
+      const trialsMap = new Map();
+      for (const result of searchResults) {
+        for (const trial of result.studies) {
+          if (!trialsMap.has(trial.nctId)) {
+            trialsMap.set(trial.nctId, trial);
+          }
+        }
+      }
+      const uniqueTrials = Array.from(trialsMap.values());
+
+      console.log(`[Trial Match] Found ${uniqueTrials.length} unique trials for ${patientConditions.length} conditions`);
+
+      // Run AI matching
+      const matches = await matchTrialsForPatient(uniqueTrials, profile, {
+        minScore: minScore as number,
+        limit: limit as number,
+      });
+
+      const response: TrialMatchResponse = {
+        matches,
+        totalTrialsAnalyzed: uniqueTrials.length,
+        patientConditions,
+        timestamp: new Date().toISOString(),
+      };
+
+      res.json(response);
+    } catch (error) {
+      console.error("Trial matching error:", error);
+      res.status(500).json({ error: "Failed to match trials" });
+    }
+  });
+
+  // Get match score for a single trial
+  app.post("/api/trials/:nctId/match", requireAuth, async (req, res) => {
+    try {
+      const { nctId } = req.params;
+      const { patientId } = req.body;
+
+      if (!patientId) {
+        return res.status(400).json({ error: "Patient ID required" });
+      }
+
+      const token = getStoredToken(patientId);
+      if (!token) {
+        return res.status(401).json({ error: "No valid session. Please reconnect health record." });
+      }
+
+      const trial = await getTrialByNctId(nctId);
+      if (!trial) {
+        return res.status(404).json({ error: "Trial not found" });
+      }
+
+      const profile = await fetchPatientData(
+        token.iss || "https://launch.smarthealthit.org/v/r4/fhir",
+        token.access_token,
+        patientId
+      );
+
+      const matchResult = await calculateTrialMatch(trial, profile);
+      res.json(matchResult);
+    } catch (error) {
+      console.error("Single trial match error:", error);
+      res.status(500).json({ error: "Failed to calculate match" });
+    }
+  });
+
+  // =========================================================================
   // SMART on FHIR API Routes
   // =========================================================================
 
@@ -234,9 +351,20 @@ export async function registerRoutes(
         return res.status(400).json({ error: "Code and state required" });
       }
 
+      // Get user ID from session
+      const session = await auth.api.getSession({ headers: fromNodeHeaders(req.headers) });
+      const userId = session?.user?.id;
+      if (!userId) {
+        return res.status(401).json({ error: "User not authenticated" });
+      }
+
       const { token, fhirBaseUrl } = await exchangeCodeForToken(code, state);
 
-      // Store the patient ID in session or return it
+      // Store token in database linked to user ID for persistence across sessions
+      const expiresIn = token.expires_in || 3600;
+      const patientId = token.patient || "default";
+      await storeTokenForUser(userId, patientId, token, fhirBaseUrl, expiresIn);
+
       res.json({
         success: true,
         patientId: token.patient,
@@ -249,22 +377,58 @@ export async function registerRoutes(
     }
   });
 
-  // Fetch patient data using stored token
+  // Check if user has a valid SMART connection
+  app.get("/api/smart/connection-status", requireAuth, async (req, res) => {
+    try {
+      const session = await auth.api.getSession({ headers: fromNodeHeaders(req.headers) });
+      const userId = session?.user?.id;
+      if (!userId) {
+        return res.json({ connected: false });
+      }
+
+      const connection = await getTokenForUser(userId);
+      if (!connection) {
+        return res.json({ connected: false });
+      }
+
+      res.json({
+        connected: true,
+        patientId: connection.patientId,
+      });
+    } catch (error) {
+      console.error("Connection status error:", error);
+      res.json({ connected: false });
+    }
+  });
+
+  // Fetch patient data using stored token (now uses DB-backed storage)
   app.get("/api/smart/patient-data/:patientId", requireAuth, async (req, res) => {
     try {
       const { patientId } = req.params;
+      const session = await auth.api.getSession({ headers: fromNodeHeaders(req.headers) });
+      const userId = session?.user?.id;
 
-      if (!patientId) {
-        return res.status(400).json({ error: "Patient ID required" });
+      if (!userId) {
+        return res.status(401).json({ error: "User not authenticated" });
       }
 
-      const token = getStoredToken(patientId);
+      // First try to get token from database (persistent)
+      let token = null;
+      let fhirBaseUrl = "https://launch.smarthealthit.org/v/r4/fhir";
+
+      const dbConnection = await getTokenForUser(userId);
+      if (dbConnection) {
+        token = dbConnection.token;
+        fhirBaseUrl = dbConnection.fhirBaseUrl;
+      } else {
+        // Fallback to in-memory cache for backward compatibility
+        token = getStoredToken(patientId);
+      }
+
       if (!token) {
         return res.status(401).json({ error: "No valid token found. Please reconnect your health record." });
       }
 
-      // Use the SMART sandbox FHIR base URL
-      const fhirBaseUrl = "https://launch.smarthealthit.org/v/r4/fhir";
       const profile = await fetchPatientData(fhirBaseUrl, token.access_token, patientId);
 
       res.json({
@@ -281,11 +445,19 @@ export async function registerRoutes(
     }
   });
 
-  // Disconnect (clear stored token)
+  // Disconnect (clear stored token - now uses DB storage)
   app.post("/api/smart/disconnect", requireAuth, async (req, res) => {
     try {
       const { patientId } = req.body;
+      const session = await auth.api.getSession({ headers: fromNodeHeaders(req.headers) });
+      const userId = session?.user?.id;
 
+      // Clear from database if we have userId
+      if (userId) {
+        await clearTokenForUser(userId);
+      }
+
+      // Also clear from in-memory cache for backward compatibility
       if (patientId) {
         clearStoredToken(patientId);
       }

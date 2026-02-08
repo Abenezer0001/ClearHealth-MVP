@@ -12,7 +12,6 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { authClient } from "@/lib/auth-client";
 import { clearPreAuthRole } from "@/lib/pre-auth-role";
-import { restartCoordinatorTour, restartPatientTour } from "@/lib/patient-tour";
 import { useToast } from "@/hooks/use-toast";
 
 export default function UserMenu() {
@@ -32,9 +31,6 @@ export default function UserMenu() {
     );
   }
 
-  const userRole = (session.user as any)?.role as string | undefined;
-  const canTakeTour = userRole === "patient" || userRole === "coordinator";
-
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -47,19 +43,6 @@ export default function UserMenu() {
           <DropdownMenuLabel>My Account</DropdownMenuLabel>
           <DropdownMenuSeparator />
           <DropdownMenuItem>{session.user.email}</DropdownMenuItem>
-          {canTakeTour && (
-            <DropdownMenuItem
-              onClick={() => {
-                if (userRole === "coordinator") {
-                  restartCoordinatorTour();
-                  return;
-                }
-                restartPatientTour();
-              }}
-            >
-              Take Product Tour
-            </DropdownMenuItem>
-          )}
           <DropdownMenuItem
             onClick={() => {
               authClient.signOut({

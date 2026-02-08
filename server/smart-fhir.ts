@@ -5,6 +5,7 @@
 
 import crypto from "crypto";
 import https from "node:https";
+import { getMongoDb } from "./mongo";
 import type {
     SMARTConfiguration,
     SMARTTokenResponse,
@@ -62,9 +63,115 @@ const SMART_SCOPES = [
 // Client ID for the sandbox (can be any string in loose mode)
 const CLIENT_ID = "trial-atlas-hackathon";
 
-// In-memory state storage (use Redis/DB in production)
+// In-memory cache for faster token access (backed by MongoDB)
 const authStates = new Map<string, SMARTAuthState>();
-const tokenStorage = new Map<string, { token: SMARTTokenResponse; expires: number }>();
+const tokenCache = new Map<string, { token: SMARTTokenResponse; expires: number; fhirBaseUrl: string }>();
+
+console.log("[SMART-FHIR] Module loaded/reloaded - token cache initialized (empty, DB will be queried)");
+
+// ============================================================================
+// MongoDB Token Persistence
+// ============================================================================
+
+interface StoredSmartConnection {
+    userId: string;
+    patientId: string;
+    token: SMARTTokenResponse;
+    fhirBaseUrl: string;
+    expires: Date;
+    createdAt: Date;
+    updatedAt: Date;
+}
+
+/**
+ * Store SMART token in MongoDB, linked to user ID
+ */
+export async function storeTokenForUser(
+    userId: string,
+    patientId: string,
+    token: SMARTTokenResponse,
+    fhirBaseUrl: string,
+    expiresInSeconds: number
+): Promise<void> {
+    const db = await getMongoDb();
+    const expires = new Date(Date.now() + expiresInSeconds * 1000);
+
+    await db.collection("smartConnections").updateOne(
+        { userId },
+        {
+            $set: {
+                userId,
+                patientId,
+                token,
+                fhirBaseUrl,
+                expires,
+                updatedAt: new Date(),
+            },
+            $setOnInsert: {
+                createdAt: new Date(),
+            },
+        },
+        { upsert: true }
+    );
+
+    // Update cache
+    tokenCache.set(userId, { token, expires: expires.getTime(), fhirBaseUrl });
+    console.log(`[SMART-FHIR] Token stored for user ${userId}, patient ${patientId}`);
+}
+
+/**
+ * Get SMART token from MongoDB for a user
+ */
+export async function getTokenForUser(userId: string): Promise<{ token: SMARTTokenResponse; fhirBaseUrl: string; patientId: string } | null> {
+    // Check cache first
+    const cached = tokenCache.get(userId);
+    if (cached && cached.expires > Date.now()) {
+        console.log(`[SMART-FHIR] Token found in cache for user ${userId}`);
+        // We need patientId too, so we'll fetch from DB anyway if not in full cache
+    }
+
+    const db = await getMongoDb();
+    const stored = await db.collection<StoredSmartConnection>("smartConnections").findOne({ userId });
+
+    if (!stored) {
+        console.log(`[SMART-FHIR] No stored connection found for user ${userId}`);
+        return null;
+    }
+
+    if (stored.expires < new Date()) {
+        console.log(`[SMART-FHIR] Stored token expired for user ${userId}`);
+        // Don't delete - user can reconnect, but mark as expired
+        return null;
+    }
+
+    // Update cache
+    tokenCache.set(userId, { token: stored.token, expires: stored.expires.getTime(), fhirBaseUrl: stored.fhirBaseUrl });
+
+    console.log(`[SMART-FHIR] Token found in DB for user ${userId}, patient ${stored.patientId}`);
+    return {
+        token: stored.token,
+        fhirBaseUrl: stored.fhirBaseUrl,
+        patientId: stored.patientId,
+    };
+}
+
+/**
+ * Clear SMART connection for a user (disconnect)
+ */
+export async function clearTokenForUser(userId: string): Promise<void> {
+    const db = await getMongoDb();
+    await db.collection("smartConnections").deleteOne({ userId });
+    tokenCache.delete(userId);
+    console.log(`[SMART-FHIR] Token cleared for user ${userId}`);
+}
+
+/**
+ * Check if user has a valid SMART connection
+ */
+export async function hasValidConnection(userId: string): Promise<boolean> {
+    const connection = await getTokenForUser(userId);
+    return connection !== null;
+}
 
 const REQUEST_TIMEOUT_MS = 15000;
 
@@ -273,12 +380,16 @@ export async function exchangeCodeForToken(
         throw new Error(`Token exchange failed: ${status}`);
     }
 
-    // Store token for subsequent API calls
+    // Store token in cache for subsequent API calls (actual DB persist happens in route with userId)
     const expiresIn = data.expires_in || 3600;
-    tokenStorage.set(data.patient || "default", {
+    const patientKey = data.patient || "default";
+    console.log(`[SMART-FHIR] Storing token in cache for patient: ${patientKey}, expires in: ${expiresIn}s`);
+    tokenCache.set(patientKey, {
         token: data,
         expires: Date.now() + expiresIn * 1000,
+        fhirBaseUrl: authState.fhirBaseUrl,
     });
+    console.log(`[SMART-FHIR] Token cache now has ${tokenCache.size} entries`);
 
     return {
         token: data,
@@ -447,15 +558,30 @@ export function getAvailableProviders() {
     }));
 }
 
+/**
+ * DEPRECATED: Use getTokenForUser() instead for persistent storage
+ * This function checks in-memory cache only (fallback for older code paths)
+ */
 export function getStoredToken(patientId: string): SMARTTokenResponse | null {
-    const stored = tokenStorage.get(patientId);
-    if (!stored || stored.expires < Date.now()) {
-        tokenStorage.delete(patientId);
+    console.log(`[SMART-FHIR] Looking for token in cache with key: ${patientId}`);
+    console.log(`[SMART-FHIR] Token cache has ${tokenCache.size} entries: [${Array.from(tokenCache.keys()).join(", ")}]`);
+    const stored = tokenCache.get(patientId);
+    if (!stored) {
+        console.log(`[SMART-FHIR] Token NOT FOUND in cache for: ${patientId}`);
         return null;
     }
+    if (stored.expires < Date.now()) {
+        console.log(`[SMART-FHIR] Token EXPIRED for: ${patientId}`);
+        tokenCache.delete(patientId);
+        return null;
+    }
+    console.log(`[SMART-FHIR] Token FOUND in cache for: ${patientId}`);
     return stored.token;
 }
 
+/**
+ * DEPRECATED: Use clearTokenForUser() instead
+ */
 export function clearStoredToken(patientId: string): void {
-    tokenStorage.delete(patientId);
+    tokenCache.delete(patientId);
 }

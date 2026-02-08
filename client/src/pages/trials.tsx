@@ -20,12 +20,14 @@ import {
     MapPin,
     Filter,
     AlertCircle,
-    Sparkles
+    Sparkles,
+    Heart,
 } from "lucide-react";
 import { TrialCard } from "@/components/trial-card";
 import { TrialDetailModal } from "@/components/trial-detail-modal";
-import { ShareProfileDialog } from "@/components/share-profile-dialog";
+import { ShareInterestDialog } from "@/components/share-interest-dialog";
 import type { ClinicalTrial, TrialSearchResponse } from "@shared/trials";
+import type { TrialMatchResponse, TrialMatchResult } from "@shared/trial-matching";
 
 // Status options for filtering
 const statusOptions = [
@@ -72,19 +74,38 @@ export default function TrialsPage() {
     const [ehrConnected, setEhrConnected] = useState(false);
     const [patientData, setPatientData] = useState<any>(null);
 
-    // Load patient data from localStorage on mount
+    // Check persistent connection status from database
+    const { data: connectionStatus } = useQuery<{ connected: boolean; patientId?: string }>({
+        queryKey: ["smart-connection-status"],
+        queryFn: async () => {
+            const res = await fetch("/api/smart/connection-status");
+            if (!res.ok) return { connected: false };
+            return res.json();
+        },
+        staleTime: 60 * 1000,
+    });
+
+    // Load patient data from localStorage on mount, or restore from DB if needed
     useEffect(() => {
         const storedPatient = localStorage.getItem("smart_patient_data");
+        const storedPatientId = localStorage.getItem("smart_patient_id");
+
         if (storedPatient) {
             try {
                 const parsed = JSON.parse(storedPatient);
-                setPatientData(parsed);
+                setPatientData({ ...parsed, id: storedPatientId });
                 setEhrConnected(true);
             } catch (e) {
                 console.error("Failed to parse patient data", e);
             }
+        } else if (connectionStatus?.connected && connectionStatus.patientId) {
+            // Connection exists in DB but localStorage cleared - redirect to connect-ehr to restore
+            console.log("[Trials] DB connection exists but localStorage cleared - will restore");
+            // Set ehrConnected to true so matching query runs, and fetch patient data
+            setEhrConnected(true);
+            setPatientData({ id: connectionStatus.patientId });
         }
-    }, []);
+    }, [connectionStatus]);
 
     const handleShowInterest = (trial: ClinicalTrial) => {
         setShareDialogTrial(trial);
@@ -111,6 +132,33 @@ export default function TrialsPage() {
         enabled: searchParams !== null,
         staleTime: 5 * 60 * 1000, // 5 minutes
     });
+
+    // Fetch AI-matched trials for connected patients
+    const patientId = typeof patientData?.id === 'string' ? patientData.id : null;
+
+    const {
+        data: matchedTrialsData,
+        isLoading: isMatchLoading,
+        error: matchError,
+    } = useQuery<TrialMatchResponse>({
+        queryKey: ["trial-matches", patientId],
+        queryFn: async () => {
+            const res = await fetch("/api/trials/match", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ patientId, limit: 10, minScore: 20 }),
+            });
+            if (!res.ok) throw new Error("Failed to get matches");
+            return res.json();
+        },
+        enabled: ehrConnected && !!patientId,
+        staleTime: 10 * 60 * 1000, // 10 minutes
+    });
+
+    // Helper to get match result for a trial by NCT ID
+    const getMatchResult = (nctId: string): TrialMatchResult | undefined => {
+        return matchedTrialsData?.matches.find(m => m.nctId === nctId);
+    };
 
     const handleSearch = () => {
         setSearchParams({
@@ -334,6 +382,7 @@ export default function TrialsPage() {
                                         onViewDetails={handleViewDetails}
                                         onShowInterest={handleShowInterest}
                                         hasEhrConnected={ehrConnected}
+                                        matchResult={getMatchResult(trial.nctId)}
                                     />
                                 ))}
                             </div>
@@ -387,15 +436,19 @@ export default function TrialsPage() {
                 onOpenChange={setModalOpen}
             />
 
-            {/* Share Profile Dialog */}
-            <ShareProfileDialog
+            {/* Share Interest Dialog */}
+            <ShareInterestDialog
                 open={shareDialogOpen}
                 onOpenChange={setShareDialogOpen}
-                trial={shareDialogTrial ? {
-                    nctId: shareDialogTrial.nctId,
-                    briefTitle: shareDialogTrial.briefTitle,
-                } : null}
-                patientData={patientData}
+                trial={shareDialogTrial}
+                matchScore={shareDialogTrial ? getMatchResult(shareDialogTrial.nctId)?.matchScore : undefined}
+                patientData={patientData ? {
+                    age: patientData.demographics?.age,
+                    sex: patientData.demographics?.gender,
+                    conditions: patientData.conditions?.map((c: any) => c.display),
+                    medications: patientData.medications?.map((m: any) => m.display),
+                    city: patientData.demographics?.city,
+                } : undefined}
             />
         </div>
     );
