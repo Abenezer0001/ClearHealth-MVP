@@ -1,5 +1,14 @@
 # Tooling and MCP Setup
 
+## Turborepo workspace setup
+- Root scripts now run with Turborepo (`npm run dev` -> `turbo dev`).
+- Workspace packages:
+  - `apps/web` runs Vite on `http://localhost:3001`
+  - `apps/server` runs API server on `http://localhost:5000`
+- In development, server supports API-only mode via:
+  - `DISABLE_VITE_MIDDLEWARE=true`
+- Vite proxies `/api` to `http://localhost:5000`.
+
 ## Dependencies added
 ```bash
 npm install motion @fontsource/sora @fontsource/space-grotesk

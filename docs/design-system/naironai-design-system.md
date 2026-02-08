@@ -6,7 +6,7 @@ Preserve the existing ClearHealth analysis workflow and backend logic, while rep
 ## Applied visual direction
 - Dark-first shell with readable high-contrast text.
 - Cool cyan primary actions with green accent support.
-- Rounded cards, soft blur surfaces, and subtle atmospheric gradients.
+- Rounded cards with clean solid surfaces (no gradient-heavy background treatment).
 - Spacious layout rhythm for long-form claim analysis content.
 
 ## Core tokens

@@ -1,12 +1,16 @@
-import "dotenv/config";
+import "./env";
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import { seedDatabase } from "./seed";
+import { auth } from "./auth";
+import { toNodeHandler } from "better-auth/node";
 
 const app = express();
 const httpServer = createServer(app);
+
+app.all("/api/auth{/*path}", toNodeHandler(auth));
 
 declare module "http" {
   interface IncomingMessage {
@@ -85,9 +89,11 @@ app.use((req, res, next) => {
   // doesn't interfere with the other routes
   if (process.env.NODE_ENV === "production") {
     serveStatic(app);
-  } else {
+  } else if (process.env.DISABLE_VITE_MIDDLEWARE !== "true") {
     const { setupVite } = await import("./vite");
     await setupVite(httpServer, app);
+  } else {
+    log("running in API-only mode (Vite middleware disabled)");
   }
 
   // ALWAYS serve the app on the port specified in the environment variable PORT

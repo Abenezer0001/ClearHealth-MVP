@@ -1,12 +1,29 @@
+import "./env";
 import { generateObject } from "ai";
-import { createOpenAI } from "@ai-sdk/openai";
+import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { z } from "zod";
 import { storage } from "./storage";
 import type { Analysis } from "@shared/schema";
 
-const openai = createOpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
+const geminiApiKey =
+  process.env.GOOGLE_GENERATIVE_AI_API_KEY ??
+  process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
+
+const geminiBaseURL =
+  process.env.GOOGLE_GENERATIVE_AI_BASE_URL ??
+  process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
+
+const geminiModel = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
+
+const normalizedGeminiBaseURL = geminiBaseURL
+  ? geminiBaseURL.replace(/\/openai\/?$/, "")
+  : undefined;
+
+const google = createGoogleGenerativeAI({
+  apiKey: geminiApiKey,
+  ...(normalizedGeminiBaseURL
+    ? { baseURL: normalizedGeminiBaseURL }
+    : {}),
 });
 
 const RED_FLAG_KEYWORDS = [
@@ -106,7 +123,7 @@ export async function runAnalysisPipeline(analysisId: number): Promise<void> {
     const hasRedFlags = redFlags.length > 0;
 
     const { object: claimsData } = await generateObject({
-      model: openai("gpt-5-mini"),
+      model: google(geminiModel),
       schema: ClaimsExtractionSchema,
       system: `You are a health misinformation analyst. Extract atomic health claims from the text.
 Rules:
@@ -136,7 +153,7 @@ Rules:
     const sourcesContext = await getTrustedSourcesContext();
     
     const { object: riskData } = await generateObject({
-      model: openai("gpt-5-mini"),
+      model: google(geminiModel),
       schema: RiskAssessmentSchema,
       system: `You are a health misinformation analyst with access to trusted sources.
 Analyze each claim and determine:
@@ -189,7 +206,7 @@ Rules:
     }
 
     const { object: counterData } = await generateObject({
-      model: openai("gpt-5-mini"),
+      model: google(geminiModel),
       schema: CounterMessageSchema,
       system: `You are a health communication expert. Generate counter-messages for health misinformation.
 Settings: Region=${analysis.region}, Tone=${analysis.tone}, Audience=${analysis.audience}, Platform=${analysis.platform}

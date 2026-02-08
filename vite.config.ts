@@ -32,6 +32,15 @@ export default defineConfig({
     emptyOutDir: true,
   },
   server: {
+    port: 3001,
+    strictPort: true,
+    allowedHosts: ["752d-196-190-62-113.ngrok-free.app"],
+    proxy: {
+      "/api": {
+        target: "http://localhost:5000",
+        changeOrigin: true,
+      },
+    },
     fs: {
       strict: true,
       deny: ["**/.*"],

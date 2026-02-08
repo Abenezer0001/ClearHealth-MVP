@@ -1,0 +1,89 @@
+name: Deploy ClearHealth MVP (Staging)
+
+on:
+  push:
+    branches:
+      - staging
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Add server to known hosts
+        run: |
+          ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy to staging server with Doppler
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+        run: |
+          ssh ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} << 'SSHEOF'
+            set -euo pipefail
+            cd ${{ secrets.WORK_DIR }}
+            git fetch origin
+            git reset --hard origin/staging
+
+            if ! command -v doppler >/dev/null 2>&1; then
+              echo "Installing Doppler CLI..."
+              mkdir -p ~/.local/bin
+              curl -Ls https://github.com/DopplerHQ/cli/releases/latest/download/doppler_linux_amd64.tar.gz | tar -xzf - -C ~/.local/bin doppler || true
+              export PATH="$HOME/.local/bin:$PATH"
+              if ! command -v doppler >/dev/null 2>&1; then
+                (curl -Ls https://cli.doppler.com/install.sh | bash) || echo "Warning: Doppler install failed."
+              fi
+            fi
+
+            export DOPPLER_TOKEN="${{ secrets.DOPPLER_TOKEN }}"
+            export DOPPLER_PROJECT="${{ secrets.DOPPLER_PROJECT }}"
+            export DOPPLER_CONFIG="${{ secrets.DOPPLER_CONFIG_STAGING }}"
+            export SUDO_PASSWORD="${{ secrets.SUDO_PASSWORD }}"
+            export PUBLIC_HEALTH_URL="${{ secrets.STAGING_HEALTH_URL }}"
+            export SERVER_DOMAIN="${{ secrets.STAGING_SERVER_DOMAIN }}"
+            export PORT_A="${{ secrets.STAGING_PORT_A }}"
+            export PORT_B="${{ secrets.STAGING_PORT_B }}"
+            export DEPLOY_STACK_NAME="${{ secrets.STAGING_DEPLOY_STACK_NAME }}"
+            export NETWORK_NAME="${{ secrets.STAGING_NETWORK_NAME }}"
+            export REDIS_VOLUME_NAME="${{ secrets.STAGING_REDIS_VOLUME_NAME }}"
+
+            if [ -z "${DOPPLER_PROJECT}" ]; then
+              export DOPPLER_PROJECT="clearhealth-mvp"
+            fi
+            if [ -z "${DOPPLER_CONFIG}" ]; then
+              export DOPPLER_CONFIG="stg"
+            fi
+
+            doppler setup --project "${DOPPLER_PROJECT}" --config "${DOPPLER_CONFIG}" --no-interactive || echo "Doppler setup warning"
+
+            chmod +x deploy-zero-downtime-staging.sh
+            ./deploy-zero-downtime-staging.sh
+          SSHEOF
+
+      - name: Verify staging deployment
+        if: ${{ secrets.STAGING_HEALTH_URL != '' }}
+        run: |
+          echo "Waiting for endpoint..."
+          sleep 20
+
+          max_attempts=8
+          attempt=1
+          while [ "$attempt" -le "$max_attempts" ]; do
+            echo "Verification attempt $attempt/$max_attempts"
+            if curl -fsS "${{ secrets.STAGING_HEALTH_URL }}"; then
+              echo "✅ Staging deployment successful"
+              exit 0
+            fi
+            sleep 10
+            attempt=$((attempt + 1))
+          done
+
+          echo "❌ Staging verification failed"
+          exit 1

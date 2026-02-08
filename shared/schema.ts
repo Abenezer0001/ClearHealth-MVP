@@ -216,3 +216,62 @@ export type AnalysisWithDetails = Analysis & {
   claims: (Claim & { citations: Citation[] })[];
   outputs: GeneratedOutput[];
 };
+
+// ============================================================================
+// User Roles & Patient Shares (Coordinator Inbox)
+// ============================================================================
+
+// User role enum
+export const userRoleEnum = ["patient", "coordinator"] as const;
+export type UserRole = typeof userRoleEnum[number];
+
+// Lead status enum for coordinator workflow
+export const leadStatusEnum = ["new", "contacted", "scheduled", "not_fit"] as const;
+export type LeadStatus = typeof leadStatusEnum[number];
+
+// Shared fields toggles (what the patient consented to share)
+export const sharedFieldsSchema = z.object({
+  labs: z.boolean().default(false),
+  meds: z.boolean().default(false),
+  location: z.boolean().default(false),
+  email: z.boolean().default(false),
+});
+export type SharedFields = z.infer<typeof sharedFieldsSchema>;
+
+// Patient share consent for trial interest
+export const patientShares = pgTable("patient_shares", {
+  id: serial("id").primaryKey(),
+  patientUserId: varchar("patient_user_id").notNull(),
+
+  // Default share (always included when they submit)
+  ageRange: varchar("age_range", { length: 20 }),      // e.g., "30-35"
+  sex: varchar("sex", { length: 20 }),                 // e.g., "Male"
+  diagnosisSummary: text("diagnosis_summary"),         // e.g., "Type 2 Diabetes, Hypertension"
+
+  // Trial they're interested in
+  trialNctId: varchar("trial_nct_id", { length: 20 }).notNull(),
+  trialTitle: text("trial_title"),
+
+  // Optional fields (only if they toggled consent)
+  sharedFields: jsonb("shared_fields").$type<SharedFields>(),
+  relevantLabs: text("relevant_labs"),
+  activeMeds: text("active_meds"),
+  locationCity: varchar("location_city", { length: 100 }),
+  contactEmail: varchar("contact_email", { length: 255 }),
+
+  // Status workflow for coordinator
+  status: varchar("status", { length: 20 }).default("new").$type<LeadStatus>(),
+  coordinatorNotes: text("coordinator_notes"),
+
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  updatedAt: timestamp("updated_at"),
+});
+
+export const insertPatientShareSchema = createInsertSchema(patientShares).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type InsertPatientShare = z.infer<typeof insertPatientShareSchema>;
+export type PatientShare = typeof patientShares.$inferSelect;

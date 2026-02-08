@@ -1,16 +1,33 @@
 {
   "name": "rest-express",
   "version": "1.0.0",
+  "private": true,
   "type": "module",
   "license": "MIT",
+  "workspaces": [
+    "apps/*"
+  ],
+  "packageManager": "npm@11.6.2",
   "scripts": {
-    "dev": "NODE_ENV=development tsx server/index.ts",
+    "dev": "doppler run -- turbo dev",
+    "dev:local": "turbo dev",
+    "dev:legacy": "doppler run --preserve-env=NODE_ENV,PORT -- NODE_ENV=development node --import tsx server/index.ts",
+    "dev:web": "doppler run -- turbo -F web dev",
+    "dev:server": "doppler run -- turbo -F server dev",
     "build": "tsx script/build.ts",
+    "build:turbo": "turbo build",
     "start": "NODE_ENV=production node dist/index.cjs",
+    "start:doppler": "doppler run --preserve-env=PORT,NODE_ENV -- npm run start",
+    "start:staging": "DOPPLER_CONFIG=stg doppler run --preserve-env=PORT,NODE_ENV -- npm run start",
+    "start:production": "DOPPLER_CONFIG=prd doppler run --preserve-env=PORT,NODE_ENV -- npm run start",
+    "deploy:staging": "bash ./deploy-zero-downtime-staging.sh",
+    "deploy:prod": "bash ./deploy-zero-downtime-prod.sh",
     "check": "tsc",
+    "check-types": "turbo check-types",
     "db:push": "drizzle-kit push"
   },
   "dependencies": {
+    "@ai-sdk/google": "^3.0.22",
     "@ai-sdk/openai": "^3.0.25",
     "@fontsource/sora": "^5.2.8",
     "@fontsource/space-grotesk": "^5.2.10",
@@ -45,6 +62,7 @@
     "@radix-ui/react-tooltip": "^1.2.0",
     "@tanstack/react-query": "^5.60.5",
     "ai": "^6.0.69",
+    "better-auth": "^1.4.18",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
@@ -107,6 +125,7 @@
     "postcss": "^8.4.47",
     "tailwindcss": "^3.4.17",
     "tsx": "^4.20.5",
+    "turbo": "^2.8.3",
     "typescript": "5.6.3",
     "vite": "^7.3.0"
   },

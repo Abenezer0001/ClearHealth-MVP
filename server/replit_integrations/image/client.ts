@@ -1,3 +1,4 @@
+import "../../env";
 import fs from "node:fs";
 import OpenAI, { toFile } from "openai";
 import { Buffer } from "node:buffer";
@@ -56,4 +57,3 @@ export async function editImages(
 
   return imageBytes;
 }
-
