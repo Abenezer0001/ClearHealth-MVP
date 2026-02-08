@@ -61,6 +61,7 @@ jobs:
             if [ -z "${DOPPLER_CONFIG}" ]; then
               export DOPPLER_CONFIG="prd"
             fi
+            echo "Using Doppler project=${DOPPLER_PROJECT}, config=${DOPPLER_CONFIG}"
             doppler setup --project "${DOPPLER_PROJECT}" --config "${DOPPLER_CONFIG}" --no-interactive || echo "Doppler setup warning"
 
             chmod +x deploy-zero-downtime.sh
