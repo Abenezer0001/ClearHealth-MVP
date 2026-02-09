@@ -28,7 +28,7 @@ function isMeaningfulText(value: unknown): boolean {
   const trimmed = value.trim();
   if (!trimmed) return false;
   const normalized = trimmed.toLowerCase();
-  return normalized !== "unknown" && normalized !== "unknown patient" && normalized !== "not specified";
+  return normalized !== "unknown" && normalized !== "unknown patient" && normalized !== "not specified" && normalized !== "not shared";
 }
 
 function normalizeDiagnosisSummary(value: unknown): string {
@@ -38,10 +38,51 @@ function normalizeDiagnosisSummary(value: unknown): string {
     .map((part) => part.trim())
     .filter((part) => {
       const normalized = part.toLowerCase();
-      return Boolean(part) && normalized !== "unknown" && normalized !== "not specified";
+      return Boolean(part) && normalized !== "unknown" && normalized !== "not specified" && normalized !== "not shared";
     });
 
-  return Array.from(new Set(parts)).slice(0, 5).join(", ");
+  return Array.from(new Set(parts)).join(", ");
+}
+
+function normalizeLeadSharedFields(sharedFields: any) {
+  const medications = Boolean(sharedFields?.medications ?? sharedFields?.meds);
+  return {
+    labs: Boolean(sharedFields?.labs),
+    medications,
+    // Keep legacy key for compatibility with older client code.
+    meds: medications,
+    location: Boolean(sharedFields?.location),
+    email: Boolean(sharedFields?.email),
+    conditions: Boolean(sharedFields?.conditions),
+    demographics: Boolean(sharedFields?.demographics),
+    phone: Boolean(sharedFields?.phone),
+  };
+}
+
+function normalizeLabItems(items: unknown): Array<{ name: string; value?: string; unit?: string; effectiveDate?: string }> {
+  if (!Array.isArray(items)) return [];
+
+  const normalized: Array<{ name: string; value?: string; unit?: string; effectiveDate?: string }> = [];
+
+  for (const raw of items) {
+    if (!raw || typeof raw !== "object") continue;
+    const source = raw as Record<string, unknown>;
+    const name = typeof source.name === "string" ? source.name.trim() : "";
+    if (!name) continue;
+
+    const value = typeof source.value === "string" ? source.value.trim() : undefined;
+    const unit = typeof source.unit === "string" ? source.unit.trim() : undefined;
+    const effectiveDate = typeof source.effectiveDate === "string" ? source.effectiveDate.trim() : undefined;
+
+    normalized.push({
+      name,
+      ...(value ? { value } : {}),
+      ...(unit ? { unit } : {}),
+      ...(effectiveDate ? { effectiveDate } : {}),
+    });
+  }
+
+  return normalized;
 }
 
 export async function registerRoutes(
@@ -653,6 +694,7 @@ export async function registerRoutes(
         trialTitle,
         sharedFields,
         relevantLabs,
+        relevantLabItems,
         activeMeds,
         locationCity,
         contactEmail,
@@ -665,13 +707,7 @@ export async function registerRoutes(
       const db = await getMongoDb();
       const leadId = await getNextSequence("patientLeads");
 
-      const normalizedSharedFields = {
-        labs: Boolean(sharedFields?.labs),
-        meds: Boolean(sharedFields?.meds),
-        location: Boolean(sharedFields?.location),
-        // Always include account email for coordinator follow-up.
-        email: true,
-      };
+      const normalizedSharedFields = normalizeLeadSharedFields(sharedFields);
 
       let finalPatientName = isMeaningfulText(patientName) ? String(patientName).trim() : (session?.user?.name || "Unknown Patient");
       let finalAgeRange = isMeaningfulText(ageRange) ? String(ageRange).trim() : "Unknown";
@@ -680,6 +716,7 @@ export async function registerRoutes(
       let finalLocationCity = isMeaningfulText(locationCity) ? String(locationCity).trim() : undefined;
       let finalActiveMeds = isMeaningfulText(activeMeds) ? String(activeMeds).trim() : undefined;
       let finalRelevantLabs = isMeaningfulText(relevantLabs) ? String(relevantLabs).trim() : undefined;
+      let finalRelevantLabItems = normalizeLabItems(relevantLabItems);
       let leadSource: "smart_fhir" | "manual" = "manual";
 
       const userId = session?.user?.id;
@@ -713,7 +750,7 @@ export async function registerRoutes(
               .filter(Boolean);
             const diagnosisPool = activeConditions.length > 0 ? activeConditions : allConditions;
             if (diagnosisPool.length > 0) {
-              finalDiagnosis = normalizeDiagnosisSummary(diagnosisPool.slice(0, 5).join(", "));
+              finalDiagnosis = normalizeDiagnosisSummary(diagnosisPool.join(", "));
             }
 
             if (!finalLocationCity) {
@@ -723,8 +760,7 @@ export async function registerRoutes(
             if (!finalActiveMeds) {
               const meds = profile.medications
                 .map((m) => m.display)
-                .filter(Boolean)
-                .slice(0, 5);
+                .filter(Boolean);
               if (meds.length > 0) {
                 finalActiveMeds = meds.join(", ");
               }
@@ -732,7 +768,6 @@ export async function registerRoutes(
 
             if (!finalRelevantLabs) {
               const labs = profile.labResults
-                .slice(0, 5)
                 .map((l) => {
                   const value = l.valueString ?? (l.value !== undefined ? `${l.value}${l.unit ? ` ${l.unit}` : ""}` : "");
                   return `${l.display}${value ? ` (${value})` : ""}`;
@@ -742,6 +777,17 @@ export async function registerRoutes(
                 finalRelevantLabs = labs.join("; ");
               }
             }
+            if (finalRelevantLabItems.length === 0) {
+              finalRelevantLabItems = profile.labResults.map((lab) => {
+                const value = lab.valueString ?? (lab.value !== undefined ? String(lab.value) : undefined);
+                return {
+                  name: lab.display,
+                  value,
+                  unit: lab.unit,
+                  effectiveDate: lab.effectiveDate,
+                };
+              }).filter((lab) => isMeaningfulText(lab.name));
+            }
           } catch (profileError) {
             console.error("Failed to enrich lead from SMART profile:", profileError);
           }
@@ -750,6 +796,39 @@ export async function registerRoutes(
 
       if (!isMeaningfulText(finalDiagnosis)) {
         finalDiagnosis = "Not specified";
+      }
+
+      if (!normalizedSharedFields.demographics) {
+        finalAgeRange = "Not shared";
+        finalSex = "Not shared";
+      }
+      if (!normalizedSharedFields.conditions) {
+        finalDiagnosis = "Not shared";
+      } else if (!isMeaningfulText(finalDiagnosis)) {
+        finalDiagnosis = "No condition data available in medical record";
+      }
+      if (normalizedSharedFields.labs && !isMeaningfulText(finalRelevantLabs)) {
+        finalRelevantLabs = "No lab results available in medical record";
+      }
+      if (normalizedSharedFields.labs && finalRelevantLabItems.length === 0 && isMeaningfulText(finalRelevantLabs)) {
+        finalRelevantLabItems = String(finalRelevantLabs)
+          .split(";")
+          .map((part) => part.trim())
+          .filter(Boolean)
+          .map((part) => {
+            const splitIndex = part.indexOf(":");
+            if (splitIndex === -1) return { name: part };
+            return {
+              name: part.slice(0, splitIndex).trim(),
+              value: part.slice(splitIndex + 1).trim(),
+            };
+          });
+      }
+      if (normalizedSharedFields.medications && !isMeaningfulText(finalActiveMeds)) {
+        finalActiveMeds = "No medication data available in medical record";
+      }
+      if (normalizedSharedFields.location && !isMeaningfulText(finalLocationCity)) {
+        finalLocationCity = "No location data available in medical record";
       }
 
       const lead = {
@@ -764,9 +843,10 @@ export async function registerRoutes(
         trialTitle: trialTitle || "Unknown Trial",
         sharedFields: normalizedSharedFields,
         relevantLabs: normalizedSharedFields.labs ? finalRelevantLabs : undefined,
-        activeMeds: normalizedSharedFields.meds ? finalActiveMeds : undefined,
+        relevantLabItems: normalizedSharedFields.labs ? finalRelevantLabItems : undefined,
+        activeMeds: normalizedSharedFields.medications ? finalActiveMeds : undefined,
         locationCity: normalizedSharedFields.location ? finalLocationCity : undefined,
-        contactEmail: session?.user?.email || contactEmail || undefined,
+        contactEmail: normalizedSharedFields.email ? (session?.user?.email || contactEmail || undefined) : undefined,
         status: "new",
         source: leadSource,
         createdAt: new Date(),
@@ -796,26 +876,40 @@ export async function registerRoutes(
 
       const hydratedLeads = await Promise.all(
         leads.map(async (lead) => {
+          const normalizedSharedFields = normalizeLeadSharedFields(lead.sharedFields);
           const hasMeaningfulName = isMeaningfulText(lead.patientName);
           const hasMeaningfulEmail = isMeaningfulText(lead.patientEmail);
           if (hasMeaningfulName && hasMeaningfulEmail) {
-            return lead;
+            return {
+              ...lead,
+              sharedFields: normalizedSharedFields,
+              diagnosisSummary: normalizeDiagnosisSummary(lead.diagnosisSummary) || String(lead.diagnosisSummary || "Not specified"),
+            };
           }
 
           if (!lead.patientUserId) {
-            return lead;
+            return {
+              ...lead,
+              sharedFields: normalizedSharedFields,
+              diagnosisSummary: normalizeDiagnosisSummary(lead.diagnosisSummary) || String(lead.diagnosisSummary || "Not specified"),
+            };
           }
 
           const dbUser = await findUserBySessionId(userCollection, String(lead.patientUserId));
           if (!dbUser) {
-            return lead;
+            return {
+              ...lead,
+              sharedFields: normalizedSharedFields,
+              diagnosisSummary: normalizeDiagnosisSummary(lead.diagnosisSummary) || String(lead.diagnosisSummary || "Not specified"),
+            };
           }
 
           return {
             ...lead,
+            sharedFields: normalizedSharedFields,
             patientName: hasMeaningfulName ? lead.patientName : (dbUser.name || "Unknown Patient"),
             patientEmail: hasMeaningfulEmail ? lead.patientEmail : (dbUser.email || lead.contactEmail || "Unknown"),
-            diagnosisSummary: normalizeDiagnosisSummary(lead.diagnosisSummary) || "Not specified",
+            diagnosisSummary: normalizeDiagnosisSummary(lead.diagnosisSummary) || String(lead.diagnosisSummary || "Not specified"),
           };
         })
       );
@@ -898,7 +992,7 @@ export async function registerRoutes(
         const parts = diagnosisSummary
           .split(/[;,]/)
           .map((p) => p.trim())
-          .filter((p) => p && p.toLowerCase() !== "not specified" && p.toLowerCase() !== "unknown");
+          .filter((p) => p && p.toLowerCase() !== "not specified" && p.toLowerCase() !== "unknown" && p.toLowerCase() !== "not shared");
 
         for (const diagnosis of parts) {
           diagnosisCounts.set(diagnosis, (diagnosisCounts.get(diagnosis) || 0) + 1);

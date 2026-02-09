@@ -107,6 +107,7 @@ export default function ConnectEHRPage() {
                     name: l.display,
                     value: String(l.value ?? l.valueString ?? ""),
                     unit: l.unit || "",
+                    effectiveDate: l.effectiveDate || "",
                 })) || [],
                 medications: patientData.profile.medications?.map(m => ({
                     name: m.display,

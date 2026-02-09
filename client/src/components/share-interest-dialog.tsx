@@ -43,6 +43,12 @@ interface ShareInterestDialogProps {
         age?: number;
         sex?: string;
         conditions?: string[];
+        labs?: Array<{
+            display: string;
+            value?: string | number;
+            unit?: string;
+            effectiveDate?: string;
+        }>;
         medications?: string[];
         city?: string;
     };
@@ -133,14 +139,33 @@ export function ShareInterestDialog({
                     patientName: patientData?.name,
                     ageRange: patientData?.age ? `${patientData.age - 5}-${patientData.age + 5}` : "Unknown",
                     sex: patientData?.sex || "Unknown",
-                    diagnosisSummary: patientData?.conditions?.slice(0, 3).join(", ") || "Not specified",
+                    diagnosisSummary: patientData?.conditions?.join(", ") || "Not specified",
                     sharedFields: {
                         labs: selectedFields.labs,
-                        meds: selectedFields.medications,
+                        medications: selectedFields.medications,
                         location: selectedFields.location,
                         email: selectedFields.email,
+                        conditions: selectedFields.conditions,
+                        demographics: selectedFields.demographics,
                     },
-                    relevantLabs: selectedFields.labs ? "Lab data shared" : undefined,
+                    relevantLabs: selectedFields.labs
+                        ? patientData?.labs
+                            ?.map((lab) => {
+                                const value = lab.value !== undefined && lab.value !== null && String(lab.value).trim() !== ""
+                                    ? `${lab.value}${lab.unit ? ` ${lab.unit}` : ""}`
+                                    : "";
+                                return value ? `${lab.display}: ${value}` : lab.display;
+                            })
+                            .join("; ")
+                        : undefined,
+                    relevantLabItems: selectedFields.labs
+                        ? (patientData?.labs || []).map((lab) => ({
+                            name: lab.display,
+                            value: lab.value !== undefined && lab.value !== null ? String(lab.value) : undefined,
+                            unit: lab.unit || "",
+                            effectiveDate: lab.effectiveDate || "",
+                        }))
+                        : undefined,
                     activeMeds: selectedFields.medications
                         ? patientData?.medications?.join(", ")
                         : undefined,

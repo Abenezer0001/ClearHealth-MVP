@@ -305,6 +305,24 @@ export default function TrialsPage() {
             age: patientData.age ?? patientData.demographics?.age,
             sex: patientData.sex ?? patientData.demographics?.gender,
             conditions: normalizeList(patientData.conditions),
+            labs: (patientData.labs || [])
+                .map((lab: any) => {
+                    if (typeof lab === "string") {
+                        return {
+                            display: lab,
+                            value: undefined,
+                            unit: "",
+                            effectiveDate: "",
+                        };
+                    }
+                    return {
+                        display: lab?.display || lab?.name || "",
+                        value: lab?.valueString ?? lab?.value,
+                        unit: lab?.unit || "",
+                        effectiveDate: lab?.effectiveDate || "",
+                    };
+                })
+                .filter((lab: any) => Boolean(lab?.display)),
             medications: normalizeList(patientData.medications),
             city:
                 patientData.location ||

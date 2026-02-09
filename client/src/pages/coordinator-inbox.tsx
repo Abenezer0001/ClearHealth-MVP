@@ -31,6 +31,7 @@ import { useToast } from "@/hooks/use-toast";
 import {
     Inbox,
     User,
+    Stethoscope,
     TestTube,
     Pill,
     MapPin,
@@ -49,8 +50,22 @@ interface Lead {
     diagnosisSummary: string;
     trialNctId: string;
     trialTitle: string;
-    sharedFields: { labs: boolean; meds: boolean; location: boolean; email: boolean };
+    sharedFields: {
+        labs: boolean;
+        medications?: boolean;
+        meds?: boolean; // legacy compatibility
+        location: boolean;
+        email: boolean;
+        conditions?: boolean;
+        demographics?: boolean;
+    };
     relevantLabs?: string;
+    relevantLabItems?: Array<{
+        name: string;
+        value?: string;
+        unit?: string;
+        effectiveDate?: string;
+    }>;
     activeMeds?: string;
     locationCity?: string;
     contactEmail?: string;
@@ -124,6 +139,36 @@ export default function CoordinatorInboxPage() {
         contacted: leads.filter((l) => l.status === "contacted").length,
         scheduled: leads.filter((l) => l.status === "scheduled").length,
         not_fit: leads.filter((l) => l.status === "not_fit").length,
+    };
+
+    const hasSharedMeds = (lead: Lead): boolean =>
+        Boolean(lead.sharedFields.medications ?? lead.sharedFields.meds);
+
+    const parseLegacyLabText = (text?: string): Array<{ name: string; value?: string; unit?: string; effectiveDate?: string }> => {
+        if (!text) return [];
+        return text
+            .split(";")
+            .map((part) => part.trim())
+            .filter(Boolean)
+            .map((part) => {
+                const idx = part.indexOf(":");
+                if (idx === -1) return { name: part };
+                return {
+                    name: part.slice(0, idx).trim(),
+                    value: part.slice(idx + 1).trim(),
+                };
+            });
+    };
+
+    const formatDate = (value?: string): string => {
+        if (!value) return "";
+        const parsed = new Date(value);
+        if (Number.isNaN(parsed.getTime())) return value;
+        return parsed.toLocaleDateString("en-US", {
+            year: "numeric",
+            month: "short",
+            day: "numeric",
+        });
     };
 
     return (
@@ -251,9 +296,19 @@ export default function CoordinatorInboxPage() {
                                                         <TestTube className="h-4 w-4 text-blue-500" />
                                                     </span>
                                                 )}
-                                                {lead.sharedFields.meds && (
+                                                {hasSharedMeds(lead) && (
                                                     <span title="Meds shared">
                                                         <Pill className="h-4 w-4 text-purple-500" />
+                                                    </span>
+                                                )}
+                                                {lead.sharedFields.conditions && (
+                                                    <span title="Conditions shared">
+                                                        <Stethoscope className="h-4 w-4 text-emerald-500" />
+                                                    </span>
+                                                )}
+                                                {lead.sharedFields.demographics && (
+                                                    <span title="Demographics shared">
+                                                        <User className="h-4 w-4 text-indigo-500" />
                                                     </span>
                                                 )}
                                                 {lead.sharedFields.location && (
@@ -267,9 +322,11 @@ export default function CoordinatorInboxPage() {
                                                     </span>
                                                 )}
                                                 {!lead.sharedFields.labs &&
-                                                    !lead.sharedFields.meds &&
+                                                    !hasSharedMeds(lead) &&
                                                     !lead.sharedFields.location &&
-                                                    !lead.sharedFields.email && (
+                                                    !lead.sharedFields.email &&
+                                                    !lead.sharedFields.conditions &&
+                                                    !lead.sharedFields.demographics && (
                                                         <span className="text-xs text-muted-foreground">
                                                             Basic only
                                                         </span>
@@ -357,21 +414,66 @@ export default function CoordinatorInboxPage() {
                                     What the patient shared
                                 </div>
                                 <div className="grid gap-2 text-sm">
-                                    {selectedLead.sharedFields.labs && selectedLead.relevantLabs && (
-                                        <div className="flex items-start gap-2">
-                                            <TestTube className="h-4 w-4 text-blue-500 mt-0.5" />
-                                            <div>
-                                                <span className="text-muted-foreground">Labs: </span>
-                                                {selectedLead.relevantLabs}
+                                    {selectedLead.sharedFields.labs && (((selectedLead.relevantLabItems?.length || 0) > 0) || Boolean(selectedLead.relevantLabs)) && (
+                                        <div className="space-y-2">
+                                            <div className="flex items-center gap-2">
+                                                <TestTube className="h-4 w-4 text-blue-500" />
+                                                <span className="text-muted-foreground">Labs:</span>
                                             </div>
+                                            {(selectedLead.relevantLabItems && selectedLead.relevantLabItems.length > 0
+                                                ? selectedLead.relevantLabItems
+                                                : parseLegacyLabText(selectedLead.relevantLabs)
+                                            ).slice(0, 20).map((lab, idx) => (
+                                                <div
+                                                    key={`${lab.name}-${idx}`}
+                                                    className="flex items-center justify-between rounded-lg border border-border bg-background p-2.5"
+                                                >
+                                                    <div className="min-w-0 flex-1">
+                                                        <div className="text-sm font-medium truncate">{lab.name}</div>
+                                                        {lab.effectiveDate && (
+                                                            <div className="text-xs text-muted-foreground">
+                                                                {formatDate(lab.effectiveDate)}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                    {lab.value && (
+                                                        <div className="ml-3 text-right text-sm font-mono font-medium">
+                                                            {`${lab.value}${lab.unit ? ` ${lab.unit}` : ""}`}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            ))}
+                                            {((selectedLead.relevantLabItems?.length || 0) > 20) && (
+                                                <div className="text-xs text-muted-foreground">
+                                                    Showing 20 of {selectedLead.relevantLabItems?.length} shared labs
+                                                </div>
+                                            )}
                                         </div>
                                     )}
-                                    {selectedLead.sharedFields.meds && selectedLead.activeMeds && (
+                                    {hasSharedMeds(selectedLead) && selectedLead.activeMeds && (
                                         <div className="flex items-start gap-2">
                                             <Pill className="h-4 w-4 text-purple-500 mt-0.5" />
                                             <div>
                                                 <span className="text-muted-foreground">Meds: </span>
                                                 {selectedLead.activeMeds}
+                                            </div>
+                                        </div>
+                                    )}
+                                    {selectedLead.sharedFields.demographics && (
+                                        <div className="flex items-start gap-2">
+                                            <User className="h-4 w-4 text-indigo-500 mt-0.5" />
+                                            <div>
+                                                <span className="text-muted-foreground">Demographics: </span>
+                                                {selectedLead.ageRange}, {selectedLead.sex}
+                                            </div>
+                                        </div>
+                                    )}
+                                    {selectedLead.sharedFields.conditions && (
+                                        <div className="flex items-start gap-2">
+                                            <Stethoscope className="h-4 w-4 text-emerald-500 mt-0.5" />
+                                            <div>
+                                                <span className="text-muted-foreground">Conditions: </span>
+                                                {selectedLead.diagnosisSummary}
                                             </div>
                                         </div>
                                     )}
@@ -394,9 +496,11 @@ export default function CoordinatorInboxPage() {
                                         </div>
                                     )}
                                     {!selectedLead.sharedFields.labs &&
-                                        !selectedLead.sharedFields.meds &&
+                                        !hasSharedMeds(selectedLead) &&
                                         !selectedLead.sharedFields.location &&
-                                        !selectedLead.sharedFields.email && (
+                                        !selectedLead.sharedFields.email &&
+                                        !selectedLead.sharedFields.conditions &&
+                                        !selectedLead.sharedFields.demographics && (
                                             <div className="text-muted-foreground">
                                                 Only basic info shared (age, sex, diagnosis)
                                             </div>
