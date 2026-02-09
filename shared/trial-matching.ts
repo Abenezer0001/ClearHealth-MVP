@@ -61,6 +61,9 @@ export interface TrialMatchResult {
     criteria: EligibilityCriterion[];
     matchedConditions: ConditionMatchResult[];
     aiSummary?: string; // AI-generated summary of the match
+    scoreConfidence?: number; // 0-100 estimated reliability of score inputs
+    scoreConfidenceLevel?: ConfidenceLevel; // high/medium/low reliability bucket
+    scoreMethodVersion?: string; // scoring algorithm identifier for auditability
 }
 
 /**

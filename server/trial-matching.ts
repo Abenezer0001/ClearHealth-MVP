@@ -26,6 +26,81 @@ const AI_MODEL = google("gemini-2.0-flash");
 // Cache for trial analysis (criteria don't change per patient)
 const trialCriteriaCache = new Map<string, EligibilityCriterion[]>();
 
+const CONFIDENCE_WEIGHT: Record<ConfidenceLevel, number> = {
+    high: 1.0,
+    medium: 0.7,
+    low: 0.4,
+};
+
+const STATUS_POINTS: Record<CriterionStatus, number> = {
+    met: 1.0,
+    not_met: 0.0,
+    missing_data: 0.25,
+    unknown: 0.2,
+};
+
+const CORE_DISQUALIFIER_CATEGORIES = new Set<EligibilityCriterion["category"]>([
+    "age",
+    "sex",
+    "condition",
+    "exclusion",
+]);
+
+function confidenceFromValue(value: number): ConfidenceLevel {
+    if (value >= 80) return "high";
+    if (value >= 60) return "medium";
+    return "low";
+}
+
+function isHardDisqualifierCriterion(criterion: EligibilityCriterion): boolean {
+    if (criterion.status !== "not_met") return false;
+    if (!CORE_DISQUALIFIER_CATEGORIES.has(criterion.category)) return false;
+    return criterion.confidence === "high";
+}
+
+export function computeMatchScore(criteria: EligibilityCriterion[]): {
+    rawScore: number;
+    finalScore: number;
+    hardDisqualifier: boolean;
+    scoreConfidence: number;
+    scoreConfidenceLevel: ConfidenceLevel;
+} {
+    if (criteria.length === 0) {
+        return {
+            rawScore: 0,
+            finalScore: 0,
+            hardDisqualifier: false,
+            scoreConfidence: 0,
+            scoreConfidenceLevel: "low",
+        };
+    }
+
+    let weightedPoints = 0;
+    let totalWeight = 0;
+    for (const criterion of criteria) {
+        const weight = CONFIDENCE_WEIGHT[criterion.confidence] ?? CONFIDENCE_WEIGHT.low;
+        const points = STATUS_POINTS[criterion.status] ?? STATUS_POINTS.unknown;
+        weightedPoints += weight * points;
+        totalWeight += weight;
+    }
+
+    const rawScore = totalWeight > 0
+        ? Math.round((weightedPoints / totalWeight) * 100)
+        : 0;
+
+    const hardDisqualifier = criteria.some(isHardDisqualifierCriterion);
+    const finalScore = hardDisqualifier ? Math.min(rawScore, 25) : rawScore;
+
+    const avgConfidence = Math.round((totalWeight / criteria.length) * 100);
+    return {
+        rawScore,
+        finalScore,
+        hardDisqualifier,
+        scoreConfidence: avgConfidence,
+        scoreConfidenceLevel: confidenceFromValue(avgConfidence),
+    };
+}
+
 // ============================================================================
 // Age Parsing and Matching
 // ============================================================================
@@ -446,22 +521,55 @@ export async function calculateTrialMatch(
     ));
 
     // 2. AI semantic condition matching
+    const activeConditions = patientProfile.conditions
+        .filter(c => c.clinicalStatus?.toLowerCase() === "active");
+
     const conditionMatches = await semanticMatchConditions(
         patientProfile.conditions,
         trial.conditions || []
     );
 
     // Add condition match as a criterion
+    const trialConditions = trial.conditions || [];
     const hasConditionMatch = conditionMatches.some(m => m.isMatch);
+    const matchedConditionConfidence: ConfidenceLevel = conditionMatches.some(m => m.isMatch && m.confidence === "high")
+        ? "high"
+        : conditionMatches.some(m => m.isMatch && m.confidence === "medium")
+            ? "medium"
+            : "low";
+
+    let conditionStatus: CriterionStatus = "unknown";
+    let conditionConfidence: ConfidenceLevel = "low";
+    let conditionDescription = "Trial does not specify a target condition";
+
+    if (trialConditions.length === 0) {
+        conditionStatus = "unknown";
+        conditionConfidence = "low";
+        conditionDescription = "Trial does not specify a target condition";
+    } else if (activeConditions.length === 0) {
+        conditionStatus = "missing_data";
+        conditionConfidence = "medium";
+        conditionDescription = "No active patient conditions available for condition matching";
+    } else if (hasConditionMatch) {
+        conditionStatus = "met";
+        conditionConfidence = matchedConditionConfidence;
+        conditionDescription = "Active patient condition aligns with trial condition focus";
+    } else {
+        conditionStatus = "not_met";
+        conditionConfidence = "high";
+        conditionDescription = "No active patient condition matches the trial condition focus";
+    }
+
     criteria.push({
         id: "condition_match",
         name: "Relevant Condition",
         category: "condition",
-        status: hasConditionMatch ? "met" : "not_met",
-        confidence: hasConditionMatch ? "high" : "medium",
-        patientValue: patientProfile.conditions.slice(0, 3).map(c => c.display).join(", "),
-        requiredValue: trial.conditions?.slice(0, 3).join(", ") || "Not specified",
-        aiReasoning: conditionMatches.find(m => m.isMatch)?.reasoning,
+        status: conditionStatus,
+        confidence: conditionConfidence,
+        description: conditionDescription,
+        patientValue: activeConditions.slice(0, 3).map(c => c.display).join(", ") || "No active conditions on record",
+        requiredValue: trialConditions.slice(0, 3).join(", ") || "Not specified",
+        aiReasoning: conditionMatches.find(m => m.isMatch)?.reasoning || conditionMatches.find(m => !m.isMatch)?.reasoning,
     });
 
     // 3. AI analysis of freeform eligibility criteria
@@ -478,24 +586,8 @@ export async function calculateTrialMatch(
     const unknownCriteria = criteria.filter(c => c.status === "unknown").length;
     const totalCriteria = criteria.length;
 
-    // Score calculation:
-    // - "met" = 100%
-    // - "not_met" = 0%
-    // - "missing_data" = 50% (benefit of doubt)
-    // - "unknown" = 50%
-    const score = totalCriteria > 0
-        ? Math.round(
-            ((metCriteria * 100) +
-                (missingDataCriteria * 50) +
-                (unknownCriteria * 50)) / totalCriteria
-        )
-        : 0;
-
-    // Hard disqualifier: if any "not_met" with high confidence, cap score
-    const hardDisqualifier = criteria.find(
-        c => c.status === "not_met" && c.confidence === "high"
-    );
-    const finalScore = hardDisqualifier ? Math.min(score, 30) : score;
+    const scoreResult = computeMatchScore(criteria);
+    const finalScore = scoreResult.finalScore;
 
     return {
         nctId: trial.nctId,
@@ -510,6 +602,9 @@ export async function calculateTrialMatch(
         unknownCriteria,
         criteria,
         matchedConditions: conditionMatches,
+        scoreConfidence: scoreResult.scoreConfidence,
+        scoreConfidenceLevel: scoreResult.scoreConfidenceLevel,
+        scoreMethodVersion: "v2_weighted_disqualifier",
     };
 }
 
