@@ -30,6 +30,8 @@ import { ShareInterestDialog } from "@/components/share-interest-dialog";
 import type { ClinicalTrial, TrialSearchResponse } from "@shared/trials";
 import type { TrialMatchResponse, TrialMatchResult } from "@shared/trial-matching";
 
+type UserRole = "patient" | "coordinator" | null;
+
 // Status options for filtering
 const statusOptions = [
     { value: "RECRUITING", label: "Recruiting" },
@@ -86,6 +88,21 @@ export default function TrialsPage() {
     const [visibleMatchCount, setVisibleMatchCount] = useState(6);
     const [loadLowScoreMatches, setLoadLowScoreMatches] = useState(false);
 
+    const { data: userRole } = useQuery<UserRole>({
+        queryKey: ["user-role"],
+        queryFn: async () => {
+            const response = await fetch("/api/user/me", {
+                credentials: "include",
+                cache: "no-store",
+            });
+            if (!response.ok) return null;
+            const data = await response.json();
+            return (data.role ?? null) as UserRole;
+        },
+        staleTime: 60 * 1000,
+    });
+    const isPatientRole = userRole === "patient";
+
     // Check persistent connection status from database
     const { data: connectionStatus } = useQuery<{ connected: boolean; patientId?: string }>({
         queryKey: ["smart-connection-status"],
@@ -99,6 +116,12 @@ export default function TrialsPage() {
 
     // Load patient data from localStorage on mount, or restore from DB if needed
     useEffect(() => {
+        if (!isPatientRole) {
+            setPatientData(null);
+            setEhrConnected(false);
+            return;
+        }
+
         const storedPatient = localStorage.getItem("smart_patient_data");
         const storedPatientId = localStorage.getItem("smart_patient_id");
 
@@ -117,7 +140,7 @@ export default function TrialsPage() {
             setEhrConnected(true);
             setPatientData({ id: connectionStatus.patientId });
         }
-    }, [connectionStatus]);
+    }, [connectionStatus, isPatientRole]);
 
     const handleShowInterest = (trial: ClinicalTrial) => {
         setShareDialogTrial(trial);
@@ -163,7 +186,7 @@ export default function TrialsPage() {
             if (!res.ok) throw new Error("Failed to get matches");
             return res.json();
         },
-        enabled: ehrConnected && !!patientId,
+        enabled: isPatientRole && ehrConnected && !!patientId,
         staleTime: 10 * 60 * 1000, // 10 minutes
     });
 
@@ -182,7 +205,7 @@ export default function TrialsPage() {
             if (!res.ok) throw new Error("Failed to get low-score matches");
             return res.json();
         },
-        enabled: ehrConnected && !!patientId && loadLowScoreMatches,
+        enabled: isPatientRole && ehrConnected && !!patientId && loadLowScoreMatches,
         staleTime: 10 * 60 * 1000,
     });
 
@@ -216,7 +239,7 @@ export default function TrialsPage() {
             if (!res.ok) throw new Error("Failed to match searched trials");
             return res.json();
         },
-        enabled: ehrConnected && !!patientId && !!data?.studies?.length,
+        enabled: isPatientRole && ehrConnected && !!patientId && !!data?.studies?.length,
         staleTime: 5 * 60 * 1000,
     });
 
@@ -461,7 +484,7 @@ export default function TrialsPage() {
                 </Card>
 
                 {/* AI Matched Trials */}
-                {ehrConnected && (
+                {isPatientRole && ehrConnected && (
                     <section className="space-y-4">
                         <div className="flex flex-wrap items-center justify-between gap-3">
                             <div className="flex items-center gap-2">

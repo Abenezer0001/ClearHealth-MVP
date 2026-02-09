@@ -227,8 +227,7 @@ export default function LandingPage() {
 
             <Reveal delay={60}>
               <h1 className="text-balance text-4xl font-semibold leading-tight md:text-6xl">
-                Find clinical trials with{" "}
-                <span className="text-primary">care, clarity, and real next steps</span>.
+                <span className="text-primary">Privacy-first</span> trial matching and discovery.
               </h1>
             </Reveal>
 
